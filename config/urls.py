@@ -6,4 +6,3 @@ urlpatterns = [
     path('auth/', include('authentication.urls')),
     path('exam/', include('exams.urls'))
 ]
-sdfgs
