@@ -13,14 +13,21 @@ class Course(models.Model):
     teacher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='taught_courses')
     students = models.ManyToManyField(User, related_name='enrolled_courses')
 
+    def __str__(self):
+        return self.name
+
 
 # Test Model
 class Test(models.Model):
     course = models.ForeignKey(Course, on_delete=models.CASCADE)
     title = models.CharField(max_length=255)
     creator = models.ForeignKey(User, on_delete=models.CASCADE)  # Teacher who created the test
+    created_at = models.DateTimeField(auto_now_add=True)
     time_limit = models.DurationField()
     deadline = models.DateTimeField()
+
+    def __str__(self):
+        return f'{self.title} {self.created_at}'
 
 
 # Question Model
@@ -38,3 +45,7 @@ class Submission(models.Model):
     answers = models.JSONField()  # Store answers here, flexible for MCQ and written answers
     is_graded = models.BooleanField(default=False)
     grade = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f'{self.student},{self.created_at}'
