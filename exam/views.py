@@ -1,93 +1,215 @@
-from rest_framework import viewsets, status
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from django.db.models import Avg, Max, Min
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
-from exam.models import Test, Submission, Course, Question
+from rest_framework import viewsets, status
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from exam.models import Course, Result, Answer, Question, Test, Profile
+from exam.serializers import CourseSerializer, TestSerializer, ResultSerializer, AnswerSerializer, QuestionSerializer, \
+    UserRegistrationSerializer, UserLoginSerializer
 
 
+class UserViewSet(viewsets.ViewSet):
+    @swagger_auto_schema(
+        request_body=UserRegistrationSerializer,
+        responses={201: openapi.Response('User registered successfully'), 400: 'Invalid input'}
+    )
+    def register(self, request):
+        serializer = UserRegistrationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(data=serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user = serializer.save()  # Save the new user
+        return Response({'username': user.username}, status=status.HTTP_201_CREATED)
+
+    @swagger_auto_schema(
+        request_body=UserLoginSerializer,
+        responses={
+            200: openapi.Response('Login successful', schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'refresh': openapi.Schema(type=openapi.TYPE_STRING),
+                    'access': openapi.Schema(type=openapi.TYPE_STRING),
+                }
+            )),
+            401: 'Invalid credentials',
+            400: 'Invalid input'
+        }
+    )
+    def login(self, request):
+        serializer = UserLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)  # Will raise ValidationError if invalid
+
+        username = serializer.validated_data['username']
+        password = serializer.validated_data['password']
+
+        # Manually retrieve user based on username
+        user = Profile.objects.filter(username=username).first()
+
+        # Check if the user exists and if the password matches
+        if not user and not user.check_password(password):
+            return Response(data={'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }, status=status.HTTP_200_OK)
+
+
+# ViewSet for Course
+class CourseViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="List all courses for the authenticated teacher.",
+        responses={200: CourseSerializer(many=True)}
+    )
+    def list(self, request):
+        courses = Course.objects.filter(teacher=request.user)
+        serializer = CourseSerializer(courses, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Retrieve a specific course by ID.",
+        responses={200: CourseSerializer()}
+    )
+    def retrieve(self, request, pk=None):
+        course = Course.objects.get(pk=pk)
+        serializer = CourseSerializer(course)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ViewSet for Test
 class TestViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        operation_summary="Create a new test",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'course_id': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID of the course'),
-                'title': openapi.Schema(type=openapi.TYPE_STRING, description='Title of the test'),
-                'time_limit': openapi.Schema(type=openapi.TYPE_STRING, description='Time limit for the test'),
-                'deadline': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
-                                           description='Deadline for the test'),
-            },
-        ),
-        responses={201: openapi.Response('Test created', schema=openapi.Schema(type=openapi.TYPE_OBJECT, properties={
-            'message': openapi.Schema(type=openapi.TYPE_STRING),
-            'test_id': openapi.Schema(type=openapi.TYPE_INTEGER)}))}
+        operation_description="Create a new test for the authenticated teacher.",
+        request_body=TestSerializer,
+        responses={201: TestSerializer(), 400: "Bad Request"}
     )
-    def create_test(self, request):
-        course_id = request.data['course_id']
-        title = request.data['title']
-        time_limit = request.data['time_limit']
-        deadline = request.data['deadline']
-
-        course = Course.objects.get(id=course_id)
-        test = Test.objects.create(
-            course=course,
-            title=title,
-            creator=request.user,
-            time_limit=time_limit,
-            deadline=deadline
-        )
-        test.save()
-        return Response(data={'message': 'Test created', 'test_id': test.id}, status=status.HTTP_201_CREATED)
+    def create(self, request):
+        serializer = TestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save(creator=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
     @swagger_auto_schema(
-        operation_summary="Submit answers for a test",
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'answers': openapi.Schema(type=openapi.TYPE_OBJECT,
-                                          additional_properties=openapi.Schema(type=openapi.TYPE_STRING),
-                                          description='Answers for the test'),
-            },
-        ),
-        responses={200: openapi.Response('Test submitted successfully')}
+        operation_description="List all tests created by the authenticated teacher.",
+        responses={200: TestSerializer(many=True)}
     )
-    def submit_test(self, request, test_id):
-        test = Test.objects.get(id=test_id)
-        student = request.user
-        answers = request.data['answers']
+    def list(self, request):
+        tests = Test.objects.filter(creator=request.user)
+        serializer = TestSerializer(tests, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-        submission = Submission.objects.create(
-            student=student,
-            test=test,
-            answers=answers
-        )
-        submission.save()
-        return Response(data={'message': 'Test submitted successfully'}, status=status.HTTP_201_CREATED)
+
+# ViewSet for Question
+class QuestionViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        operation_summary="Grade a submitted test",
-        responses={200: openapi.Response('Test graded', schema=openapi.Schema(type=openapi.TYPE_OBJECT, properties={
-            'message': openapi.Schema(type=openapi.TYPE_STRING), 'grade': openapi.Schema(type=openapi.TYPE_NUMBER)}))}
+        operation_description="Create a new question for a test.",
+        request_body=QuestionSerializer,
+        responses={201: QuestionSerializer(), 400: "Bad Request"}
     )
-    def grade_test(self, request, submission_id):
-        submission = Submission.objects.get(id=submission_id)
-        answers = submission.answers
-        correct_answers = 0
-        total_questions = 0
+    def create(self, request):
+        serializer = QuestionSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        # Automatic grading logic for MCQs
-        for question_id, answer in answers.items():
-            question = Question.objects.get(id=question_id)
-            if question.is_mcq and question.options['correct_option'] == answer:
-                correct_answers += 1
-            total_questions += 1
+    @swagger_auto_schema(
+        operation_description="List questions of a particular test.",
+        responses={200: QuestionSerializer(many=True)}
+    )
+    def list(self, request, test_pk=None):
+        questions = Question.objects.filter(test=test_pk)
+        serializer = QuestionSerializer(questions, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-        grade = (correct_answers / total_questions) * 100
-        submission.grade = grade
-        submission.is_graded = True
-        submission.save()
 
-        return Response({'message': 'Test graded', 'grade': grade}, status=status.HTTP_200_OK)
+# ViewSet for Answer
+class AnswerViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Submit answers to questions.",
+        request_body=AnswerSerializer,
+        responses={201: AnswerSerializer(), 400: "Bad Request"}
+    )
+    def create(self, request):
+        serializer = AnswerSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save(student=request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@swagger_auto_schema(
+    operation_description="List all answers submitted for a test by the student.",
+    responses={200: AnswerSerializer(many=True)}
+)
+def list(self, request, test_pk=None):
+    answers = Answer.objects.filter(student=request.user, question__test=test_pk)
+    serializer = AnswerSerializer(answers, many=True)
+    return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ViewSet for Result
+class ResultViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="List results for a particular test.",
+        responses={200: ResultSerializer(many=True)}
+    )
+    def list(self, request, test_pk=None):
+        if request.user.profile.user_type == 'teacher':
+            results = Result.objects.filter(test=test_pk)
+        else:
+            results = Result.objects.filter(test=test_pk, student=request.user)
+
+        serializer = ResultSerializer(results, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Retrieve a specific result by ID.",
+        responses={200: ResultSerializer()}
+    )
+    def retrieve(self, request, pk=None):
+        result = Result.objects.get(pk=pk)
+        serializer = ResultSerializer(result)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+# ViewSet for Test Statistics
+class TestStatisticsViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Retrieve aggregated statistics for the test.",
+        responses={200: openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'average_score': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'highest_score': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'lowest_score': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'total_students': openapi.Schema(type=openapi.TYPE_INTEGER),
+            }
+        )}
+    )
+    def retrieve(self, request, test_pk=None):
+        results = Result.objects.filter(test=test_pk)
+
+        stats = {
+            'average_score': results.aggregate(Avg('score'))['score__avg'],
+            'highest_score': results.aggregate(Max('score'))['score__max'],
+            'lowest_score': results.aggregate(Min('score'))['score__min'],
+            'total_students': results.count(),
+        }
+
+        return Response(stats, status=status.HTTP_200_OK)
