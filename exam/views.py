@@ -91,4 +91,3 @@ class TestViewSet(viewsets.ViewSet):
         submission.save()
 
         return Response({'message': 'Test graded', 'grade': grade}, status=status.HTTP_200_OK)
-d
