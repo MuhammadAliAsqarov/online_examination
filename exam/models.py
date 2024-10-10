@@ -123,3 +123,4 @@ class TestResult(models.Model):
             student=self.student,
             defaults={'score': self.score, 'graded_by_teacher': False}
         )
+sdaf
