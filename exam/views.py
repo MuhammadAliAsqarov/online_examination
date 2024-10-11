@@ -106,20 +106,36 @@ class TestViewSet(viewsets.ViewSet):
     def access_test(self, request, pk=None):
         test = get_object_or_404(Test, pk=pk)
 
-        # Check if the test is already finished
+        # Check if the test has already finished based on deadline
         if timezone.now() > test.deadline:
             return Response({'detail': 'Test is already over.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Retrieve any existing TestCompletion for this test and student
+        test_completion = TestCompletion.objects.filter(test=test, student=request.user).first()
+
+        if test_completion:
+            # Check if the test time has already expired
+            if timezone.now() > test_completion.end_time:
+                return Response({'detail': 'Test is already over.'}, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({'detail': 'Test already started.', 'end_time': test_completion.end_time},
+                                status=status.HTTP_200_OK)
+
         # Automatically start the test by creating TestCompletion
-        test_completion, created = TestCompletion.objects.get_or_create(
-            test=test, student=request.user, defaults={'start_time': timezone.now()}
+        test_completion = TestCompletion.objects.create(
+            test=test,
+            student=request.user,
+            start_time=timezone.now()
         )
 
-        if not created:
-            return Response({'detail': 'Test already started'}, status=status.HTTP_400_BAD_REQUEST)
+        # Calculate end time based on time_limit
+        test_completion.end_time = test_completion.start_time + test.time_limit
+        test_completion.save()
 
-        return Response({'detail': 'Test accessed and started', 'end_time': test_completion.end_time},
-                        status=status.HTTP_200_OK)
+        return Response({
+            'detail': 'Test accessed and started',
+            'end_time': test_completion.end_time
+        }, status=status.HTTP_200_OK)
 
 
 class QuestionViewSet(viewsets.ViewSet):
