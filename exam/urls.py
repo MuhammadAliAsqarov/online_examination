@@ -16,7 +16,7 @@ urlpatterns = [
     path('tests/', TestViewSet.as_view({'get': 'list', 'post': 'create'}), name='test-list-create'),
     path('tests/<int:pk>/', TestViewSet.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}),
          name='test-detail'),
-
+    path('tests/<int:pk>/access/', TestViewSet.as_view({'get': 'access_test'}), name='access-test'),
     # Question URLs
     path('tests/<int:test_pk>/questions/', QuestionViewSet.as_view({'get': 'list', 'post': 'create'}),
          name='question-list-create'),

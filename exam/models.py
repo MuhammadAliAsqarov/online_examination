@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils import timezone
 
 
 # Model to distinguish between teachers and students
@@ -9,7 +10,6 @@ class Profile(AbstractUser):
         (2, 'Student'),
     )
     user_type = models.IntegerField(choices=USER_TYPE_CHOICES, default=1)
-    username = models.CharField(max_length=128, unique=True)
 
     def __str__(self):
         return f"{self.username} - {self.get_user_type_display()}"
@@ -35,7 +35,13 @@ class Test(models.Model):
     def __str__(self):
         return self.name
 
+    def clean(self):
+        # Ensure that the deadline is set in the future
+        if self.deadline and self.deadline < timezone.now():
+            raise ValueError('The deadline must be set in the future.')
 
+
+# Question model linked to a test, with two question types: MCQ and Open-ended
 class Question(models.Model):
     QUESTION_TYPE_CHOICES = (
         ('mcq', 'Multiple Choice'),
@@ -66,22 +72,36 @@ class Answer(models.Model):
     student = models.ForeignKey(Profile, on_delete=models.CASCADE)
     answer_text = models.TextField(blank=True, null=True)  # For open-ended or single choice text
 
+    def clean(self):
+        # Ensure that answer_text is only provided for the right question type
+        if self.question.question_type == 'mcq' and not self.answer_text:
+            raise ValueError('MCQ answers must have answer text.')
+        if self.question.question_type == 'open' and self.answer_text is None:
+            raise ValueError('Open-ended questions require answer text.')
+
     def __str__(self):
         return f"Answer by {self.student.username} to {self.question.question_text}"
 
 
+# Model to handle test completion by students
 class TestCompletion(models.Model):
     test = models.ForeignKey(Test, on_delete=models.CASCADE)
     student = models.ForeignKey(Profile, on_delete=models.CASCADE)
     start_time = models.DateTimeField(auto_now_add=True)
-    end_time = models.DateTimeField()
+    end_time = models.DateTimeField(blank=True, null=True)
 
     def save(self, *args, **kwargs):
-        # Automatically calculate end time based on time limit
-        self.end_time = self.start_time + self.test.time_limit
+        if not self.end_time:  # Calculate end time only if not provided
+            self.end_time = self.start_time + self.test.time_limit
         super().save(*args, **kwargs)
 
+    def clean(self):
+        # Ensure that the calculated end_time does not exceed the test deadline
+        if self.end_time > self.test.deadline:
+            raise ValueError('End time exceeds the test deadline.')
 
+
+# Model to store student results
 class Result(models.Model):
     test = models.ForeignKey(Test, on_delete=models.CASCADE)
     student = models.ForeignKey(Profile, on_delete=models.CASCADE)
@@ -92,13 +112,13 @@ class Result(models.Model):
         return f"Result for {self.student.username} - {self.test.name}: {self.score}%"
 
 
+# Model to handle automatic and manual grading
 class TestResult(models.Model):
     test = models.ForeignKey(Test, on_delete=models.CASCADE)
     student = models.ForeignKey(Profile, on_delete=models.CASCADE)
     score = models.FloatField(default=0.0)
 
     def calculate_score(self):
-        # Auto-grade MCQs
         mcq_questions = self.test.questions.filter(question_type='mcq')
         total_mcq_questions = mcq_questions.count()
         correct_answers = 0
@@ -109,17 +129,18 @@ class TestResult(models.Model):
                                                           choice_text=student_answer.answer_text).exists():
                 correct_answers += 1
 
-        # Calculate score for MCQs
         mcq_score = (correct_answers / total_mcq_questions) * 100 if total_mcq_questions > 0 else 0
-
-        # Open-ended questions will be marked manually later
-        # Store MCQ result
         self.score = mcq_score
         self.save()
 
-        # Create or update the Result record for the student
+        # Update or create Result record for this test and student
         Result.objects.update_or_create(
             test=self.test,
             student=self.student,
             defaults={'score': self.score, 'graded_by_teacher': False}
         )
+
+    def __str__(self):
+        return f"TestResult for {self.student.username} - {self.test.name}: {self.score}%"
+
+
