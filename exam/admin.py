@@ -62,4 +62,3 @@ class ResultAdmin(admin.ModelAdmin):
 class TestCompletionAdmin(admin.ModelAdmin):
     list_display = ('id', 'test', 'student', 'start_time', 'end_time')
     search_fields = ('test__name', 'student__username')
-z
