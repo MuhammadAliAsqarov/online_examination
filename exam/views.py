@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-from exam.models import Course, Result, Answer, Question, Test, Profile, TestCompletion
+from exam.models import Course, Result, Answer, Question, Test, Profile, TestCompletion, Choice
 from exam.serializers import CourseSerializer, TestSerializer, ResultSerializer, AnswerSerializer, QuestionSerializer, \
     UserRegistrationSerializer, UserLoginSerializer
 
@@ -79,15 +79,80 @@ class TestViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        request_body=TestSerializer,
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'name': openapi.Schema(type=openapi.TYPE_STRING, description='Test name'),
+                'course': openapi.Schema(type=openapi.TYPE_INTEGER, description='Course ID'),
+                'time_limit': openapi.Schema(type=openapi.TYPE_STRING, description='Time limit for the test'),
+                'deadline': openapi.Schema(type=openapi.TYPE_STRING, description='Test deadline'),
+                'questions': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Items(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'question_text': openapi.Schema(type=openapi.TYPE_STRING, description='Question text'),
+                            'question_type': openapi.Schema(
+                                type=openapi.TYPE_STRING,
+                                description='Type of question (mcq/open)',
+                                enum=['mcq', 'open']
+                            ),
+                            'choices': openapi.Schema(
+                                type=openapi.TYPE_ARRAY,
+                                items=openapi.Items(
+                                    type=openapi.TYPE_OBJECT,
+                                    properties={
+                                        'choice_text': openapi.Schema(type=openapi.TYPE_STRING),
+                                        'is_correct': openapi.Schema(type=openapi.TYPE_BOOLEAN)
+                                    }
+                                ),
+                                description='Choices for MCQ type questions (optional for open-ended questions)'
+                            )
+                        }
+                    ),
+                    description='List of questions to be added to the test'
+                )
+            }
+        ),
         responses={201: TestSerializer(), 400: "Bad Request"}
     )
     def create(self, request):
-        serializer = TestSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save(creator=request.user)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        data = request.data
+
+        # Step 1: Validate the Test data
+        test_serializer = TestSerializer(data=data)
+        if not test_serializer.is_valid():
+            return Response(test_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Step 2: Create the Test
+        test = test_serializer.save(creator=request.user)
+
+        # Step 3: Handle questions (if provided)
+        questions_data = data.get('questions', [])
+        for question_data in questions_data:
+            question_text = question_data.get('question_text')
+            question_type = question_data.get('question_type')
+
+            # Create the question
+            question = Question.objects.create(
+                test=test,
+                question_text=question_text,
+                question_type=question_type
+            )
+
+            # Handle choices for MCQ questions
+            if question_type == 'mcq':
+                choices_data = question_data.get('choices', [])
+                for choice_data in choices_data:
+                    Choice.objects.create(
+                        question=question,
+                        choice_text=choice_data.get('choice_text'),
+                        is_correct=choice_data.get('is_correct', False)
+                    )
+
+        # Return the created Test and associated questions
+        response_data = TestSerializer(test).data
+        return Response(response_data, status=status.HTTP_201_CREATED)
 
     @swagger_auto_schema(
         responses={200: TestSerializer(many=True)}
@@ -166,17 +231,44 @@ class AnswerViewSet(viewsets.ViewSet):
         request_body=AnswerSerializer,
         responses={201: AnswerSerializer(), 400: "Bad Request"}
     )
-    def create(self, request):
-        serializer = AnswerSerializer(data=request.data)
+    def submit_answer(self, request, question_pk=None):
+        """
+        Submit an answer to a particular question in a test.
+        """
+        question = get_object_or_404(Question, pk=question_pk)
+
+        # Check if student has access to the test
+        test_completion = TestCompletion.objects.filter(
+            test=question.test,
+            student=request.user
+        ).first()
+
+        if not test_completion:
+            return Response({'detail': 'Test not accessed or started.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check if the time limit has expired
+        if timezone.now() > test_completion.end_time:
+            return Response({'detail': 'Test time is over.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Submit the answer
+        data = request.data
+        data['question'] = question_pk
+        data['student'] = request.user.id
+
+        serializer = AnswerSerializer(data=data)
         if serializer.is_valid():
-            serializer.save(student=request.user)
+            serializer.save()
             return Response(serializer.data, status=status.HTTP_201_CREATED)
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @swagger_auto_schema(
         responses={200: AnswerSerializer(many=True)}
     )
     def list(self, request, test_pk=None):
+        """
+        List all answers submitted by the student for a particular test.
+        """
         answers = Answer.objects.filter(student=request.user, question__test=test_pk)
         serializer = AnswerSerializer(answers, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -189,10 +281,23 @@ class ResultViewSet(viewsets.ViewSet):
         responses={200: ResultSerializer(many=True)}
     )
     def list(self, request, test_pk=None):
+        test = get_object_or_404(Test, pk=test_pk)
+
+        # Check if the user is a teacher or a student
         if request.user.user_type == 'teacher':
+            # Teachers can view all results for their own tests
+            if test.creator != request.user:
+                return Response({'detail': 'You are not authorized to view results for this test.'},
+                                status=status.HTTP_403_FORBIDDEN)
             results = Result.objects.filter(test=test_pk)
-        else:
+
+        elif request.user.user_type == 'student':
+            # Students can only view their own results
             results = Result.objects.filter(test=test_pk, student=request.user)
+
+        else:
+            return Response({'detail': 'You are not authorized to view these results.'},
+                            status=status.HTTP_403_FORBIDDEN)
 
         serializer = ResultSerializer(results, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -213,8 +318,19 @@ class TestStatisticsViewSet(viewsets.ViewSet):
         )}
     )
     def retrieve(self, request, test_pk=None):
-        results = Result.objects.filter(test=test_pk)
+        test = get_object_or_404(Test, pk=test_pk)
 
+        # Ensure that only the teacher who created the test can access its statistics
+        if request.user.user_type == 'teacher':
+            if test.creator != request.user:
+                return Response({'detail': 'You are not authorized to view statistics for this test.'},
+                                status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({'detail': 'Only teachers can view test statistics.'},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # Fetch and return the statistics
+        results = Result.objects.filter(test=test_pk)
         stats = {
             'average_score': results.aggregate(Avg('score'))['score__avg'],
             'highest_score': results.aggregate(Max('score'))['score__max'],
