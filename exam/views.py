@@ -6,9 +6,7 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
-from rest_framework.exceptions import PermissionDenied, NotFound
 from rest_framework_simplejwt.tokens import RefreshToken
-
 from exam.models import Course, Result, Answer, Question, Test, Profile, TestCompletion
 from exam.serializers import CourseSerializer, TestSerializer, ResultSerializer, AnswerSerializer, QuestionSerializer, \
     UserRegistrationSerializer, UserLoginSerializer
