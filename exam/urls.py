@@ -44,4 +44,3 @@ urlpatterns = [
     # Test Statistics
     path('tests/<int:test_pk>/statistics/', TestStatisticsViewSet.as_view({'get': 'retrieve'}), name='test-statistics'),
 ]
-sdf
