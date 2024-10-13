@@ -6,17 +6,25 @@ from .views import (
     AnswerViewSet,
     ResultViewSet,
     TestStatisticsViewSet,
-    UserViewSet
+    UserViewSet,
+    CourseViewSet
 )
 
 urlpatterns = [
+    # User URLs
     path('register/', UserViewSet.as_view({'post': 'register'}), name='user_register'),
     path('login/', UserViewSet.as_view({'post': 'login'}), name='user_login'),
+
+    # Course URLs
+    path('courses/', CourseViewSet.as_view({'get': 'list'}), name='course-list'),
+    path('courses/<int:pk>/', CourseViewSet.as_view({'get': 'retrieve'}), name='course-detail'),
+
     # Test URLs
     path('tests/', TestViewSet.as_view({'get': 'list', 'post': 'create'}), name='test-list-create'),
     path('tests/<int:pk>/', TestViewSet.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}),
          name='test-detail'),
     path('tests/<int:pk>/access/', TestViewSet.as_view({'get': 'access_test'}), name='access-test'),
+
     # Question URLs
     path('tests/<int:test_pk>/questions/', QuestionViewSet.as_view({'get': 'list', 'post': 'create'}),
          name='question-list-create'),
@@ -24,7 +32,7 @@ urlpatterns = [
          name='question-detail'),
 
     # Answer URLs
-    path('tests/<int:test_pk>/answers/', AnswerViewSet.as_view({'get': 'list', 'post': 'create'}),
+    path('tests/<int:test_pk>/answers/', AnswerViewSet.as_view({'get': 'list', 'post': 'submit_answer'}),
          name='answer-list-create'),
     path('answers/<int:pk>/', AnswerViewSet.as_view({'get': 'retrieve', 'put': 'update', 'delete': 'destroy'}),
          name='answer-detail'),
@@ -36,3 +44,4 @@ urlpatterns = [
     # Test Statistics
     path('tests/<int:test_pk>/statistics/', TestStatisticsViewSet.as_view({'get': 'retrieve'}), name='test-statistics'),
 ]
+sdf
