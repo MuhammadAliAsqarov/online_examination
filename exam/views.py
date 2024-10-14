@@ -89,7 +89,7 @@ class TestViewSet(viewsets.ViewSet):
                 'questions': openapi.Schema(
                     type=openapi.TYPE_ARRAY,
                     items=openapi.Items(
-                        type=openapi.TYPE_OBJECT,
+type=openapi.TYPE_OBJECT,
                         properties={
                             'question_text': openapi.Schema(type=openapi.TYPE_STRING, description='Question text'),
                             'question_type': openapi.Schema(
