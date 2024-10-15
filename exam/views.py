@@ -3,6 +3,7 @@ from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import viewsets, status
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
@@ -12,10 +13,39 @@ from exam.serializers import CourseSerializer, TestSerializer, ResultSerializer,
     UserRegistrationSerializer, UserLoginSerializer
 
 
+class Pagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+
+pagination_params = openapi.Parameter(
+    'page',
+    openapi.IN_QUERY,
+    description="Page number to retrieve.",
+    type=openapi.TYPE_INTEGER,
+    required=False,
+)
+
+page_size_param = openapi.Parameter(
+    'page_size',
+    openapi.IN_QUERY,
+    description="Number of questions per page.",
+    type=openapi.TYPE_INTEGER,
+    required=False,
+)
+
+question_response = openapi.Response(
+    'Success',
+    QuestionSerializer(many=True),
+)
+
+
 class UserViewSet(viewsets.ViewSet):
     @swagger_auto_schema(
         request_body=UserRegistrationSerializer,
-        responses={201: 'User registered successfully', 400: 'Invalid input'}
+        responses={201: 'User registered successfully', 400: 'Invalid input'},
+        tags=['auth']
     )
     def register(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
@@ -26,6 +56,7 @@ class UserViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(
         request_body=UserLoginSerializer,
+        tags=['auth'],
         responses={
             200: openapi.Response('Login successful', schema=openapi.Schema(
                 type=openapi.TYPE_OBJECT,
@@ -62,7 +93,15 @@ class CourseViewSet(viewsets.ViewSet):
         responses={200: CourseSerializer(many=True)}
     )
     def list(self, request):
-        courses = Course.objects.filter(teacher=request.user)
+        user = request.user
+
+        if user.user_type == 1:  # Teacher
+            courses = Course.objects.filter(teacher=user)
+        elif user.user_type == 2:  # Student
+            courses = user.courses.all()
+        else:
+            return Response({"detail": "Invalid user type."}, status=status.HTTP_400_BAD_REQUEST)
+
         serializer = CourseSerializer(courses, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -118,29 +157,19 @@ class TestViewSet(viewsets.ViewSet):
     )
     def create(self, request):
         data = request.data
-
-        # Step 1: Validate the Test data
-        test_serializer = TestSerializer(data=data)
+        test_serializer = TestSerializer(data=data, context={'request': request})
         if not test_serializer.is_valid():
             return Response(test_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        # Step 2: Create the Test
-        test = test_serializer.save(creator=request.user)
-
-        # Step 3: Handle questions (if provided)
+        test = test_serializer.save()
         questions_data = data.get('questions', [])
         for question_data in questions_data:
             question_text = question_data.get('question_text')
             question_type = question_data.get('question_type')
-
-            # Create the question
             question = Question.objects.create(
                 test=test,
                 question_text=question_text,
                 question_type=question_type
             )
-
-            # Handle choices for MCQ questions
             if question_type == 'mcq':
                 choices_data = question_data.get('choices', [])
                 for choice_data in choices_data:
@@ -149,8 +178,6 @@ class TestViewSet(viewsets.ViewSet):
                         choice_text=choice_data.get('choice_text'),
                         is_correct=choice_data.get('is_correct', False)
                     )
-
-        # Return the created Test and associated questions
         response_data = TestSerializer(test).data
         return Response(response_data, status=status.HTTP_201_CREATED)
 
@@ -158,7 +185,14 @@ class TestViewSet(viewsets.ViewSet):
         responses={200: TestSerializer(many=True)}
     )
     def list(self, request):
-        tests = Test.objects.filter(creator=request.user)
+        user = request.user
+        if user.user_type == 1:  # Teacher
+            tests = Test.objects.filter(creator=user)
+        elif user.user_type == 2:  # Student
+            courses = user.courses.all()  # Get courses the student is enrolled in
+            tests = Test.objects.filter(course__in=courses)  # Get tests from those courses
+        else:
+            return Response({"detail": "Invalid user type."}, status=status.HTTP_400_BAD_REQUEST)
         serializer = TestSerializer(tests, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -168,30 +202,20 @@ class TestViewSet(viewsets.ViewSet):
     )
     def access_test(self, request, pk=None):
         test = get_object_or_404(Test, pk=pk)
-
-        # Check if the test has already finished based on deadline
         if timezone.now() > test.deadline:
             return Response({'detail': 'Test is already over.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Retrieve any existing TestCompletion for this test and student
         test_completion = TestCompletion.objects.filter(test=test, student=request.user).first()
-
         if test_completion:
-            # Check if the test time has already expired
             if timezone.now() > test_completion.end_time:
                 return Response({'detail': 'Test is already over.'}, status=status.HTTP_400_BAD_REQUEST)
             else:
                 return Response({'detail': 'Test already started.', 'end_time': test_completion.end_time},
                                 status=status.HTTP_200_OK)
-
-        # Automatically start the test by creating TestCompletion
         test_completion = TestCompletion.objects.create(
             test=test,
             student=request.user,
             start_time=timezone.now()
         )
-
-        # Calculate end time based on time_limit
         test_completion.end_time = test_completion.start_time + test.time_limit
         test_completion.save()
 
@@ -199,6 +223,19 @@ class TestViewSet(viewsets.ViewSet):
             'detail': 'Test accessed and started',
             'end_time': test_completion.end_time
         }, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        responses={200: 'Test finished successfully', 400: 'Invalid request'},
+    )
+    def finish_test(self, request, pk=None):
+        test_completion = get_object_or_404(TestCompletion, test_id=pk, student=request.user)
+        if test_completion.end_time is not None:
+            return Response({"detail": "Test already finished."}, status=status.HTTP_400_BAD_REQUEST)
+        test_completion.end_time = timezone.now()
+        test_completion.save()
+        result, created = Result.objects.get_or_create(test=test_completion.test, student=request.user)
+        result.calculate_mcq_score()
+        return Response({"detail": "Test finished successfully.", "score": result.score}, status=status.HTTP_200_OK)
 
 
 class QuestionViewSet(viewsets.ViewSet):
@@ -216,62 +253,21 @@ class QuestionViewSet(viewsets.ViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @swagger_auto_schema(
-        responses={200: QuestionSerializer(many=True)}
+        operation_summary="List Questions",
+        operation_description="Retrieve a list of questions for a specific test, with optional pagination.",
+        manual_parameters=[pagination_params, page_size_param],
+        responses={
+            status.HTTP_200_OK: question_response,
+            status.HTTP_404_NOT_FOUND: "Test not found."
+        },
     )
     def list(self, request, test_pk=None):
         questions = Question.objects.filter(test=test_pk)
-        serializer = QuestionSerializer(questions, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        paginator = Pagination()
+        paginated_questions = paginator.paginate_queryset(questions, request)
 
-
-class AnswerViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(
-        request_body=AnswerSerializer,
-        responses={201: AnswerSerializer(), 400: "Bad Request"}
-    )
-    def submit_answer(self, request, question_pk=None):
-        """
-        Submit an answer to a particular question in a test.
-        """
-        question = get_object_or_404(Question, pk=question_pk)
-
-        # Check if student has access to the test
-        test_completion = TestCompletion.objects.filter(
-            test=question.test,
-            student=request.user
-        ).first()
-
-        if not test_completion:
-            return Response({'detail': 'Test not accessed or started.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check if the time limit has expired
-        if timezone.now() > test_completion.end_time:
-            return Response({'detail': 'Test time is over.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Submit the answer
-        data = request.data
-        data['question'] = question_pk
-        data['student'] = request.user.id
-
-        serializer = AnswerSerializer(data=data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    @swagger_auto_schema(
-        responses={200: AnswerSerializer(many=True)}
-    )
-    def list(self, request, test_pk=None):
-        """
-        List all answers submitted by the student for a particular test.
-        """
-        answers = Answer.objects.filter(student=request.user, question__test=test_pk)
-        serializer = AnswerSerializer(answers, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        serializer = QuestionSerializer(paginated_questions, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 class ResultViewSet(viewsets.ViewSet):
@@ -282,18 +278,13 @@ class ResultViewSet(viewsets.ViewSet):
     )
     def list(self, request, test_pk=None):
         test = get_object_or_404(Test, pk=test_pk)
-
-        # Check if the user is a teacher or a student
-        if request.user.user_type == 'teacher':
-            # Teachers can view all results for their own tests
+        if request.user.user_type == 1:
             if test.creator != request.user:
                 return Response({'detail': 'You are not authorized to view results for this test.'},
                                 status=status.HTTP_403_FORBIDDEN)
-            results = Result.objects.filter(test=test_pk)
-
-        elif request.user.user_type == 'student':
-            # Students can only view their own results
-            results = Result.objects.filter(test=test_pk, student=request.user)
+            results = Result.objects.filter(test=test)
+        elif request.user.user_type == 2:
+            results = Result.objects.filter(test=test, student=request.user)
 
         else:
             return Response({'detail': 'You are not authorized to view these results.'},
@@ -301,6 +292,40 @@ class ResultViewSet(viewsets.ViewSet):
 
         serializer = ResultSerializer(results, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class AnswerViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Submit an answer to a question",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'question': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID of the question being answered'),
+                'answer_text': openapi.Schema(type=openapi.TYPE_STRING,
+                                              description='Text of the answer (required for MCQ and open-ended questions)')
+            },
+            required=['question', 'answer_text']
+        ),
+    )
+    def create(self, request):
+        student = request.user
+        data = request.data.copy()
+        data['student'] = student.id
+        question = get_object_or_404(Question, id=data['question'])
+        test = question.test
+        test_completion = TestCompletion.objects.filter(test=test, student=student).first()
+        if not test_completion or timezone.now() > test_completion.end_time:
+            return Response({"detail": "You cannot submit answers after the test has finished."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if Answer.objects.filter(student=student, question=question).exists():
+            return Response({"detail": "You have already answered this question."}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = AnswerSerializer(data=data, context={'request': request})
+        if serializer.is_valid():
+            answer = serializer.save()
+            return Response(AnswerSerializer(answer).data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class TestStatisticsViewSet(viewsets.ViewSet):
@@ -319,22 +344,18 @@ class TestStatisticsViewSet(viewsets.ViewSet):
     )
     def retrieve(self, request, test_pk=None):
         test = get_object_or_404(Test, pk=test_pk)
-
-        # Ensure that only the teacher who created the test can access its statistics
-        if request.user.user_type == 'teacher':
+        if request.user.user_type == 1:
             if test.creator != request.user:
                 return Response({'detail': 'You are not authorized to view statistics for this test.'},
                                 status=status.HTTP_403_FORBIDDEN)
         else:
             return Response({'detail': 'Only teachers can view test statistics.'},
                             status=status.HTTP_403_FORBIDDEN)
-
-        # Fetch and return the statistics
-        results = Result.objects.filter(test=test_pk)
+        results = Result.objects.filter(test=test)
         stats = {
-            'average_score': results.aggregate(Avg('score'))['score__avg'],
-            'highest_score': results.aggregate(Max('score'))['score__max'],
-            'lowest_score': results.aggregate(Min('score'))['score__min'],
+            'average_score': results.aggregate(Avg('score'))['score__avg'] or 0,
+            'highest_score': results.aggregate(Max('score'))['score__max'] or 0,
+            'lowest_score': results.aggregate(Min('score'))['score__min'] or 0,
             'total_students': results.count(),
         }
 

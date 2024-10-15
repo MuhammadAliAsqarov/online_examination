@@ -10,7 +10,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         fields = ['username', 'password', 'user_type']
 
     def create(self, validated_data):
-        validated_data['password'] = make_password(validated_data['password'])  # Hash the password before saving
+        validated_data['password'] = make_password(validated_data['password'])
         return super().create(validated_data)
 
 
@@ -26,7 +26,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 
 
 class CourseSerializer(serializers.ModelSerializer):
-    teacher = serializers.StringRelatedField()  # Use string representation for the teacher field
+    teacher = serializers.StringRelatedField()
 
     class Meta:
         model = Course
@@ -34,18 +34,23 @@ class CourseSerializer(serializers.ModelSerializer):
 
 
 class TestSerializer(serializers.ModelSerializer):
-    course = serializers.StringRelatedField()  # Display course name
-    creator = serializers.StringRelatedField()  # Display creator's username
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all())
+    creator = serializers.StringRelatedField(read_only=True)
 
     class Meta:
         model = Test
         fields = ['course', 'creator', 'name', 'time_limit', 'deadline']
 
     def validate_deadline(self, value):
-        """ Ensure the deadline is in the future """
         if value <= datetime.now():
             raise serializers.ValidationError("The deadline must be in the future.")
         return value
+
+    def create(self, validated_data):
+        creator = self.context['request'].user
+        validated_data['creator'] = creator
+        test = Test.objects.create(**validated_data)
+        return test
 
 
 class ChoiceSerializer(serializers.ModelSerializer):
@@ -55,7 +60,7 @@ class ChoiceSerializer(serializers.ModelSerializer):
 
 
 class QuestionSerializer(serializers.ModelSerializer):
-    choices = ChoiceSerializer(many=True, read_only=True)  # Nested serializer for related choices
+    choices = ChoiceSerializer(many=True, read_only=True)
 
     class Meta:
         model = Question
@@ -67,17 +72,27 @@ class QuestionSerializer(serializers.ModelSerializer):
 
 
 class AnswerSerializer(serializers.ModelSerializer):
-    question = serializers.StringRelatedField()  # Display question text
-    student = serializers.StringRelatedField()  # Display student's username
-
     class Meta:
         model = Answer
-        fields = ['id', 'question', 'student', 'answer_text']
+        fields = ['id', 'student', 'question', 'answer_text']
+
+    def validate(self, data):
+        question = data.get('question')
+        if question.question_type == 'mcq' and not data.get('answer_text'):
+            raise serializers.ValidationError('MCQ answers must have answer text.')
+        if question.question_type == 'open' and data.get('answer_text') is None:
+            raise serializers.ValidationError('Open-ended questions require answer text.')
+
+        return data
+
+    def create(self, validated_data):
+        # Save the answer to the database
+        return Answer.objects.create(**validated_data)
 
 
 class ResultSerializer(serializers.ModelSerializer):
-    test = serializers.StringRelatedField()  # Display test name
-    student = serializers.StringRelatedField()  # Display student name
+    test = serializers.StringRelatedField()
+    student = serializers.StringRelatedField()
 
     class Meta:
         model = Result
