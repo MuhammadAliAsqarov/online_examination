@@ -106,16 +106,9 @@ def calculate_test_result(test_completion):
         question__test=test_completion.test,
         student=test_completion.student
     )
-    # Calculate total correct answers from MCQs
     correct_answers = answers.filter(selected_choice__is_correct=True).count()
-
-    # Calculate total possible MCQ score
     total_mcq_questions = answers.filter(selected_choice__is_correct__isnull=False).count()
-
-    # Calculate total score from teacher assignments
-    teacher_scores = answers.aggregate(Sum('score'))['score__sum'] or 0
-
-    # Calculate the overall score
+    teacher_scores = answers.aggregate(Sum('grade_by_teacher'))['grade_by_teacher__sum'] or 0
     mcq_score = (correct_answers / total_mcq_questions) * 100 if total_mcq_questions > 0 else 0
     overall_score = mcq_score + teacher_scores
 
