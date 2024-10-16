@@ -1,3 +1,5 @@
+from unittest import TestResult
+
 from django.db.models import Avg, Max, Min
 from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
@@ -8,51 +10,27 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-from exam.models import Course, Result, Answer, Question, Test, Profile, TestCompletion, Choice
-from exam.serializers import CourseSerializer, TestSerializer, ResultSerializer, AnswerSerializer, QuestionSerializer, \
-    UserRegistrationSerializer, UserLoginSerializer
-
-
-class Pagination(PageNumberPagination):
-    page_size = 10
-    page_size_query_param = 'page_size'
-    max_page_size = 100
-
-
-pagination_params = openapi.Parameter(
-    'page',
-    openapi.IN_QUERY,
-    description="Page number to retrieve.",
-    type=openapi.TYPE_INTEGER,
-    required=False,
-)
-
-page_size_param = openapi.Parameter(
-    'page_size',
-    openapi.IN_QUERY,
-    description="Number of questions per page.",
-    type=openapi.TYPE_INTEGER,
-    required=False,
-)
-
-question_response = openapi.Response(
-    'Success',
-    QuestionSerializer(many=True),
-)
+from .models import Course, CompletedTest, AnswerSubmission, Question, Test, User, Choice, TestProgress
+from .permissions import is_admin, is_teacher, is_student
+from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLoginSerializer, TestSerializer, \
+    CourseSerializer, QuestionSerializer
+from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
+    create_question, calculate_test_result
 
 
 class UserViewSet(viewsets.ViewSet):
     @swagger_auto_schema(
-        request_body=UserRegistrationSerializer,
+        request_body=UserRegisterSerializer,
         responses={201: 'User registered successfully', 400: 'Invalid input'},
         tags=['auth']
     )
+    @is_admin
     def register(self, request):
-        serializer = UserRegistrationSerializer(data=request.data)
-        if serializer.is_valid():
-            user = serializer.save()
-            return Response({'username': user.username}, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer = UserRegisterSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user = serializer.save()
+        return Response(data={'username': user.username}, status=status.HTTP_201_CREATED)
 
     @swagger_auto_schema(
         request_body=UserLoginSerializer,
@@ -71,46 +49,56 @@ class UserViewSet(viewsets.ViewSet):
     )
     def login(self, request):
         serializer = UserLoginSerializer(data=request.data)
-        if serializer.is_valid(raise_exception=True):
-            username = serializer.validated_data['username']
-            password = serializer.validated_data['password']
-            user = Profile.objects.filter(username=username).first()
+        if not serializer.is_valid():
+            return Response(data=serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        username = serializer.validated_data['username']
+        password = serializer.validated_data['password']
+        user = User.objects.filter(username=username).first()
 
-            if not user or not user.check_password(password):
-                return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+        if not user or not user.check_password(password):
+            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
-            refresh = RefreshToken.for_user(user)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-            }, status=status.HTTP_200_OK)
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+        }, status=status.HTTP_200_OK)
 
 
 class CourseViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: CourseSerializer(many=True)}
+        operation_description="Create a new course with a specified teacher",
+        manual_parameters=[],
+        request_body=CourseCreateSerializer,
+        responses={201: CourseCreateSerializer()}
     )
-    def list(self, request):
-        user = request.user
+    @is_admin
+    def create(self, request):
+        serializer = CourseCreateSerializer(data=request.data, context={'request': request})
 
-        if user.user_type == 1:  # Teacher
-            courses = Course.objects.filter(teacher=user)
-        elif user.user_type == 2:  # Student
-            courses = user.courses.all()
-        else:
-            return Response({"detail": "Invalid user type."}, status=status.HTTP_400_BAD_REQUEST)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-        serializer = CourseSerializer(courses, many=True)
+    @swagger_auto_schema(
+        operation_description="Retrieve details of a course by its ID",
+        responses={200: CourseSerializer(), 404: 'Course not found'}
+    )
+    @check_course_retrieve
+    def retrieve(self, request, course):
+        serializer = CourseSerializer(course)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @swagger_auto_schema(
-        responses={200: CourseSerializer()}
+        operation_description="List all courses",
+        responses={200: CourseSerializer(many=True), 404: 'No courses found'}
     )
-    def retrieve(self, request, pk=None):
-        course = get_object_or_404(Course, pk=pk)
-        serializer = CourseSerializer(course)
+    @check_for_course
+    def list(self, request, courses):
+        serializer = CourseSerializer(courses, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
@@ -120,41 +108,81 @@ class TestViewSet(viewsets.ViewSet):
     @swagger_auto_schema(
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
+            required=['title', 'course', 'time_limit', 'deadline', 'questions'],
             properties={
-                'name': openapi.Schema(type=openapi.TYPE_STRING, description='Test name'),
-                'course': openapi.Schema(type=openapi.TYPE_INTEGER, description='Course ID'),
-                'time_limit': openapi.Schema(type=openapi.TYPE_STRING, description='Time limit for the test'),
-                'deadline': openapi.Schema(type=openapi.TYPE_STRING, description='Test deadline'),
+                'title': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='The title or name of the test'
+                ),
+                'course': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='ID of the course the test belongs to'
+                ),
+                'time_limit': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='Time limit for the test in HH:MM:SS format',
+                    example='01:30:00'
+                ),
+                'deadline': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format=openapi.FORMAT_DATETIME,
+                    description='Deadline for completing the test in ISO 8601 format',
+                    example='2024-12-31T23:59:59'
+                ),
                 'questions': openapi.Schema(
                     type=openapi.TYPE_ARRAY,
                     items=openapi.Items(
                         type=openapi.TYPE_OBJECT,
+                        required=['question_text', 'question_type'],  # Marking required fields
                         properties={
-                            'question_text': openapi.Schema(type=openapi.TYPE_STRING, description='Question text'),
+                            'question_text': openapi.Schema(
+                                type=openapi.TYPE_STRING,
+                                description='Text of the question'
+                            ),
                             'question_type': openapi.Schema(
                                 type=openapi.TYPE_STRING,
-                                description='Type of question (mcq/open)',
+                                description='Type of the question: multiple-choice (mcq) or open-ended (open)',
                                 enum=['mcq', 'open']
                             ),
                             'choices': openapi.Schema(
                                 type=openapi.TYPE_ARRAY,
                                 items=openapi.Items(
                                     type=openapi.TYPE_OBJECT,
+                                    required=['choice_text'],  # Required for choice_text
                                     properties={
-                                        'choice_text': openapi.Schema(type=openapi.TYPE_STRING),
-                                        'is_correct': openapi.Schema(type=openapi.TYPE_BOOLEAN)
+                                        'choice_text': openapi.Schema(
+                                            type=openapi.TYPE_STRING,
+                                            description='Text of the choice (only for MCQ questions)'
+                                        ),
+                                        'is_correct': openapi.Schema(
+                                            type=openapi.TYPE_BOOLEAN,
+                                            description='Indicates if the choice is the correct answer (only for MCQ questions)'
+                                        )
                                     }
                                 ),
-                                description='Choices for MCQ type questions (optional for open-ended questions)'
+                                description='List of choices for MCQ questions (ignored for open-ended questions)',
+                                example=[
+                                    {"choice_text": "Choice 1", "is_correct": True},
+                                    {"choice_text": "Choice 2", "is_correct": False}
+                                ]
                             )
                         }
                     ),
-                    description='List of questions to be added to the test'
+                    description='List of questions to include in the test. For open-ended questions, omit the choices.'
                 )
             }
         ),
-        responses={201: TestSerializer(), 400: "Bad Request"}
+        responses={
+            201: openapi.Response(
+                description='Test created successfully',
+                schema=TestSerializer()
+            ),
+            400: openapi.Response(
+                description='Invalid input data'
+            )
+        }
     )
+    @is_teacher
     def create(self, request):
         data = request.data
         test_serializer = TestSerializer(data=data, context={'request': request})
@@ -163,36 +191,16 @@ class TestViewSet(viewsets.ViewSet):
         test = test_serializer.save()
         questions_data = data.get('questions', [])
         for question_data in questions_data:
-            question_text = question_data.get('question_text')
-            question_type = question_data.get('question_type')
-            question = Question.objects.create(
-                test=test,
-                question_text=question_text,
-                question_type=question_type
-            )
-            if question_type == 'mcq':
-                choices_data = question_data.get('choices', [])
-                for choice_data in choices_data:
-                    Choice.objects.create(
-                        question=question,
-                        choice_text=choice_data.get('choice_text'),
-                        is_correct=choice_data.get('is_correct', False)
-                    )
+            create_question(test, question_data)
         response_data = TestSerializer(test).data
         return Response(response_data, status=status.HTTP_201_CREATED)
 
     @swagger_auto_schema(
+        operation_description="List all tests",
         responses={200: TestSerializer(many=True)}
     )
-    def list(self, request):
-        user = request.user
-        if user.user_type == 1:  # Teacher
-            tests = Test.objects.filter(creator=user)
-        elif user.user_type == 2:  # Student
-            courses = user.courses.all()  # Get courses the student is enrolled in
-            tests = Test.objects.filter(course__in=courses)  # Get tests from those courses
-        else:
-            return Response({"detail": "Invalid user type."}, status=status.HTTP_400_BAD_REQUEST)
+    @check_for_test
+    def list(self, request, tests):
         serializer = TestSerializer(tests, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -201,162 +209,97 @@ class TestViewSet(viewsets.ViewSet):
         responses={200: 'Test accessed and started', 400: 'Test unavailable'}
     )
     def access_test(self, request, pk=None):
+        user = request.user
         test = get_object_or_404(Test, pk=pk)
-        if timezone.now() > test.deadline:
-            return Response({'detail': 'Test is already over.'}, status=status.HTTP_400_BAD_REQUEST)
-        test_completion = TestCompletion.objects.filter(test=test, student=request.user).first()
+        check_deadline(test)
+        test_completion = CompletedTest.objects.filter(test=test, student=user).first()
         if test_completion:
-            if timezone.now() > test_completion.end_time:
+            if test_completion.end_time and timezone.now() > test_completion.end_time:
                 return Response({'detail': 'Test is already over.'}, status=status.HTTP_400_BAD_REQUEST)
-            else:
-                return Response({'detail': 'Test already started.', 'end_time': test_completion.end_time},
-                                status=status.HTTP_200_OK)
-        test_completion = TestCompletion.objects.create(
-            test=test,
-            student=request.user,
-            start_time=timezone.now()
-        )
-        test_completion.end_time = test_completion.start_time + test.time_limit
-        test_completion.save()
-
+            if not test_completion.end_time or timezone.now() < test_completion.end_time:
+                return Response({
+                    'detail': 'Test already started.',
+                    'end_time': test_completion.end_time
+                }, status=status.HTTP_200_OK)
+        start_time = timezone.now()
+        end_time = start_time + test.time_limit
+        test_completion = start_test(user, test, start_time, end_time)
         return Response({
             'detail': 'Test accessed and started',
             'end_time': test_completion.end_time
         }, status=status.HTTP_200_OK)
 
-    @swagger_auto_schema(
-        responses={200: 'Test finished successfully', 400: 'Invalid request'},
-    )
-    def finish_test(self, request, pk=None):
-        test_completion = get_object_or_404(TestCompletion, test_id=pk, student=request.user)
-        if test_completion.end_time is not None:
-            return Response({"detail": "Test already finished."}, status=status.HTTP_400_BAD_REQUEST)
-        test_completion.end_time = timezone.now()
-        test_completion.save()
-        result, created = Result.objects.get_or_create(test=test_completion.test, student=request.user)
-        result.calculate_mcq_score()
-        return Response({"detail": "Test finished successfully.", "score": result.score}, status=status.HTTP_200_OK)
 
-
-class QuestionViewSet(viewsets.ViewSet):
+class QuestionsTestViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
+    pagination_class = PageNumberPagination
 
     @swagger_auto_schema(
-        request_body=QuestionSerializer,
-        responses={201: QuestionSerializer(), 400: "Bad Request"}
+        operation_description="List all questions for a particular test with pagination",
+        responses={200: QuestionSerializer(many=True)}
     )
-    def create(self, request):
-        serializer = QuestionSerializer(data=request.data)
-        if serializer.is_valid():
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    @swagger_auto_schema(
-        operation_summary="List Questions",
-        operation_description="Retrieve a list of questions for a specific test, with optional pagination.",
-        manual_parameters=[pagination_params, page_size_param],
-        responses={
-            status.HTTP_200_OK: question_response,
-            status.HTTP_404_NOT_FOUND: "Test not found."
-        },
-    )
-    def list(self, request, test_pk=None):
-        questions = Question.objects.filter(test=test_pk)
-        paginator = Pagination()
+    def list(self, request, test_id):
+        test = get_object_or_404(Test, id=test_id)
+        questions = Question.objects.filter(test=test)
+        paginator = self.pagination_class()
         paginated_questions = paginator.paginate_queryset(questions, request)
-
         serializer = QuestionSerializer(paginated_questions, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-
-class ResultViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-
     @swagger_auto_schema(
-        responses={200: ResultSerializer(many=True)}
-    )
-    def list(self, request, test_pk=None):
-        test = get_object_or_404(Test, pk=test_pk)
-        if request.user.user_type == 1:
-            if test.creator != request.user:
-                return Response({'detail': 'You are not authorized to view results for this test.'},
-                                status=status.HTTP_403_FORBIDDEN)
-            results = Result.objects.filter(test=test)
-        elif request.user.user_type == 2:
-            results = Result.objects.filter(test=test, student=request.user)
-
-        else:
-            return Response({'detail': 'You are not authorized to view these results.'},
-                            status=status.HTTP_403_FORBIDDEN)
-
-        serializer = ResultSerializer(results, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
-
-
-class AnswerViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(
-        operation_description="Submit an answer to a question",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'question': openapi.Schema(type=openapi.TYPE_INTEGER, description='ID of the question being answered'),
-                'answer_text': openapi.Schema(type=openapi.TYPE_STRING,
-                                              description='Text of the answer (required for MCQ and open-ended questions)')
+                'answer': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='The student\'s answer (text for open questions or choice ID for MCQ)'
+                )
             },
-            required=['question', 'answer_text']
+            required=['answer'],
         ),
+        operation_description="Submit an answer to a particular question",
+        responses={200: "Answer recorded", 400: "Bad Request"}
     )
-    def create(self, request):
-        student = request.user
-        data = request.data.copy()
-        data['student'] = student.id
-        question = get_object_or_404(Question, id=data['question'])
-        test = question.test
-        test_completion = TestCompletion.objects.filter(test=test, student=student).first()
-        if not test_completion or timezone.now() > test_completion.end_time:
-            return Response({"detail": "You cannot submit answers after the test has finished."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        if Answer.objects.filter(student=student, question=question).exists():
-            return Response({"detail": "You have already answered this question."}, status=status.HTTP_400_BAD_REQUEST)
-        serializer = AnswerSerializer(data=data, context={'request': request})
-        if serializer.is_valid():
-            answer = serializer.save()
-            return Response(AnswerSerializer(answer).data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def answer_question(self, request, test_id, question_id):
+        question = get_object_or_404(Question, id=question_id, test_id=test_id)
+        test_progress, created = TestProgress.objects.get_or_create(
+            test_id=test_id, student=request.user, completed=False
+        )
+        answer_data = request.data.get('answer')
+        if question.question_type == 'mcq':
+            choice = get_object_or_404(Choice, id=answer_data, question=question)
+            AnswerSubmission.objects.create(
+                question=question,
+                student=request.user,
+                selected_choice=choice
+            )
+        elif question.question_type == 'open':
+            AnswerSubmission.objects.create(
+                question=question,
+                student=request.user,
+                answer_text=answer_data
+            )
+        return Response({"message": "Answer recorded"}, status=status.HTTP_200_OK)
 
 
-class TestStatisticsViewSet(viewsets.ViewSet):
+class TestCompletionViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'average_score': openapi.Schema(type=openapi.TYPE_NUMBER),
-                'highest_score': openapi.Schema(type=openapi.TYPE_NUMBER),
-                'lowest_score': openapi.Schema(type=openapi.TYPE_NUMBER),
-                'total_students': openapi.Schema(type=openapi.TYPE_INTEGER),
-            }
-        )}
+        operation_description="Finish the test and calculate the result",
+        responses={200: "Test completed", 400: "Bad Request"}
     )
-    def retrieve(self, request, test_pk=None):
-        test = get_object_or_404(Test, pk=test_pk)
-        if request.user.user_type == 1:
-            if test.creator != request.user:
-                return Response({'detail': 'You are not authorized to view statistics for this test.'},
-                                status=status.HTTP_403_FORBIDDEN)
-        else:
-            return Response({'detail': 'Only teachers can view test statistics.'},
-                            status=status.HTTP_403_FORBIDDEN)
-        results = Result.objects.filter(test=test)
-        stats = {
-            'average_score': results.aggregate(Avg('score'))['score__avg'] or 0,
-            'highest_score': results.aggregate(Max('score'))['score__max'] or 0,
-            'lowest_score': results.aggregate(Min('score'))['score__min'] or 0,
-            'total_students': results.count(),
-        }
-
-        return Response(stats, status=status.HTTP_200_OK)
+    def finish_test(self, request, test_id):
+        test_completion = get_object_or_404(TestProgress, test_id=test_id, student=request.user, completed=False)
+        test_completion.completed = True
+        test_completion.end_time = timezone.now()
+        test_completion.save()
+        result = calculate_test_result(test_completion)
+        CompletedTest.objects.create(
+            test=test_completion.test,
+            student=request.user,
+            score=result['score'],
+            start_time=test_completion.start_time,
+            end_time=test_completion.end_time
+        )
+        return Response({"message": "Test completed", "result": result}, status=status.HTTP_200_OK)

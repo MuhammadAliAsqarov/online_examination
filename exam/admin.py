@@ -1,16 +1,14 @@
 from django.contrib import admin
-from exam.models import Profile, Course, Test, Question, Choice, Answer, Result, TestCompletion
+from exam.models import User, Course, Test, Question, Choice, AnswerSubmission, CompletedTest, TestProgress
 
 
-# Admin for Profile model
-@admin.register(Profile)
-class ProfileAdmin(admin.ModelAdmin):
+@admin.register(User)
+class UserAdmin(admin.ModelAdmin):
     list_display = ('id', 'username', 'user_type')
     search_fields = ('username',)
     list_filter = ('user_type',)
 
 
-# Admin for Course model
 @admin.register(Course)
 class CourseAdmin(admin.ModelAdmin):
     list_display = ('id', 'name', 'teacher')
@@ -18,15 +16,13 @@ class CourseAdmin(admin.ModelAdmin):
     list_filter = ('teacher',)
 
 
-# Admin for Test model
 @admin.register(Test)
 class TestAdmin(admin.ModelAdmin):
-    list_display = ('id', 'name', 'course', 'creator', 'deadline', 'time_limit')
-    search_fields = ('name', 'course__name', 'creator__username')
+    list_display = ('id', 'title', 'course', 'creator', 'deadline', 'time_limit')
+    search_fields = ('title', 'course__name', 'creator__username')
     list_filter = ('course', 'creator')
 
 
-# Admin for Question model
 @admin.register(Question)
 class QuestionAdmin(admin.ModelAdmin):
     list_display = ('id', 'question_text', 'test', 'question_type')
@@ -34,7 +30,6 @@ class QuestionAdmin(admin.ModelAdmin):
     list_filter = ('test', 'question_type')
 
 
-# Admin for Choice model
 @admin.register(Choice)
 class ChoiceAdmin(admin.ModelAdmin):
     list_display = ('id', 'choice_text', 'question', 'is_correct')
@@ -42,23 +37,20 @@ class ChoiceAdmin(admin.ModelAdmin):
     list_filter = ('question', 'is_correct')
 
 
-# Admin for Answer model
-@admin.register(Answer)
+@admin.register(AnswerSubmission)
 class AnswerAdmin(admin.ModelAdmin):
     list_display = ('id', 'question', 'student', 'answer_text')
     search_fields = ('student__username', 'question__question_text')
 
 
-# Admin for Result model
-@admin.register(Result)
-class ResultAdmin(admin.ModelAdmin):
-    list_display = ('id', 'test', 'student', 'score', 'graded_by_teacher')
-    search_fields = ('test__name', 'student__username')
-    list_filter = ('test', 'graded_by_teacher')
-
-
-# Admin for TestCompletion model
-@admin.register(TestCompletion)
-class TestCompletionAdmin(admin.ModelAdmin):
+@admin.register(CompletedTest)
+class CompletedTestAdmin(admin.ModelAdmin):
     list_display = ('id', 'test', 'student', 'start_time', 'end_time')
     search_fields = ('test__name', 'student__username')
+
+
+@admin.register(TestProgress)
+class TestProgressAdmin(admin.ModelAdmin):
+    list_display = ('student', 'test', 'completed')
+    list_filter = ('student', 'test')
+    search_fields = ('student__username', 'test__title')
