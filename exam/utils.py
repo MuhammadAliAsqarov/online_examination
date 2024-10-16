@@ -102,7 +102,6 @@ def start_test(user, test, start_time, end_time):
 
 
 def calculate_test_result(test_completion):
-    # Get all answer submissions for the student's test
     answers = AnswerSubmission.objects.filter(
         question__test=test_completion.test,
         student=test_completion.student
