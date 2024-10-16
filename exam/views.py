@@ -1,6 +1,6 @@
 from unittest import TestResult
 
-from django.db.models import Avg, Max, Min
+from django.db.models import Avg, Max, Min, Sum
 from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -208,6 +208,7 @@ class TestViewSet(viewsets.ViewSet):
         operation_description="Access a test for the student.",
         responses={200: 'Test accessed and started', 400: 'Test unavailable'}
     )
+    @is_student
     def access_test(self, request, pk=None):
         user = request.user
         test = get_object_or_404(Test, pk=pk)
@@ -294,12 +295,67 @@ class TestCompletionViewSet(viewsets.ViewSet):
         test_completion.completed = True
         test_completion.end_time = timezone.now()
         test_completion.save()
+
         result = calculate_test_result(test_completion)
+
         CompletedTest.objects.create(
             test=test_completion.test,
             student=request.user,
-            score=result['score'],
-            start_time=test_completion.start_time,
-            end_time=test_completion.end_time
+            score=result['overall_score']
         )
-        return Response({"message": "Test completed", "result": result}, status=status.HTTP_200_OK)
+        return Response({
+            "message": "Test completed",
+            "result": result
+        }, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Score the answers of a student for a specific test",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'question_id': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='ID of the question being scored'
+                ),
+                'score': openapi.Schema(
+                    type=openapi.TYPE_INTEGER,
+                    description='Score given by the teacher for the question'
+                ),
+            },
+            required=['question_id', 'score'],
+        ),
+        responses={200: "Score recorded", 400: "Bad Request"}
+    )
+    @is_teacher
+    def score_answer(self, request, test_id):
+        data = request.data
+        question_id = data.get('question_id')
+        score = data.get('score')
+        answer_submission = get_object_or_404(
+            AnswerSubmission,
+            question__test__id=test_id,
+            question_id=question_id,
+            student__user_type=1
+        )
+
+        answer_submission.score = score
+        answer_submission.save()
+        return Response({"message": "Score recorded"}, status=status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        operation_description="Get the overall score for a student's test",
+        responses={200: "Score retrieved", 404: "Test not found"}
+    )
+    @is_student
+    def get_overall_score(self, request, test_id):
+        completed_test = get_object_or_404(CompletedTest, test_id=test_id, student=request.user)
+        result = calculate_test_result(completed_test)
+
+        return Response({
+            "message": "Score retrieved",
+            "overall_score": result['overall_score'],
+            "mcq_score": result['mcq_score'],
+            "teacher_scores": result['teacher_scores'],
+            "total_questions": result['total_questions'],
+            "correct_answers": result['correct_answers'],
+        }, status=status.HTTP_200_OK)

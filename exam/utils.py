@@ -1,3 +1,4 @@
+from django.db.models import Sum
 from django.utils import timezone
 
 from django.shortcuts import get_object_or_404
@@ -101,15 +102,28 @@ def start_test(user, test, start_time, end_time):
 
 
 def calculate_test_result(test_completion):
+    # Get all answer submissions for the student's test
     answers = AnswerSubmission.objects.filter(
         question__test=test_completion.test,
         student=test_completion.student
     )
-    total_questions = answers.count()
-    current_score = answers.filter(selected_choice__is_correct=True).count()
+    # Calculate total correct answers from MCQs
+    correct_answers = answers.filter(selected_choice__is_correct=True).count()
+
+    # Calculate total possible MCQ score
+    total_mcq_questions = answers.filter(selected_choice__is_correct__isnull=False).count()
+
+    # Calculate total score from teacher assignments
+    teacher_scores = answers.aggregate(Sum('score'))['score__sum'] or 0
+
+    # Calculate the overall score
+    mcq_score = (correct_answers / total_mcq_questions) * 100 if total_mcq_questions > 0 else 0
+    overall_score = mcq_score + teacher_scores
 
     return {
-        'total_questions': total_questions,
-        'correct_answers': current_score,
-        'score': (current_score / total_questions) * 100 if total_questions > 0 else 0
+        'total_questions': answers.count(),
+        'correct_answers': correct_answers,
+        'mcq_score': mcq_score,
+        'teacher_scores': teacher_scores,
+        'overall_score': overall_score,
     }

@@ -73,6 +73,7 @@ class AnswerSubmission(models.Model):
     student = models.ForeignKey('User', on_delete=models.CASCADE, related_name='submitted_answers')
     selected_choice = models.ForeignKey('Choice', null=True, blank=True, on_delete=models.CASCADE)  # for MCQs
     answer_text = models.TextField(null=True, blank=True)  # for open-ended questions
+    grade_by_teacher = models.IntegerField(default=0)
     submission_time = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
