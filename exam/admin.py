@@ -54,3 +54,4 @@ class TestProgressAdmin(admin.ModelAdmin):
     list_display = ('student', 'test', 'completed')
     list_filter = ('student', 'test')
     search_fields = ('student__username', 'test__title')
+o
