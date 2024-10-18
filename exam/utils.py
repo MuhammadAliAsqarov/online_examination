@@ -106,14 +106,14 @@ def calculate_test_result(test_completion):
         question__test=test_completion.test,
         student=test_completion.student
     )
+    total_count = answers.count()
     correct_answers = answers.filter(selected_choice__is_correct=True).count()
-    total_mcq_questions = answers.filter(selected_choice__is_correct__isnull=False).count()
     teacher_scores = answers.aggregate(Sum('grade_by_teacher'))['grade_by_teacher__sum'] or 0
-    mcq_score = (correct_answers / total_mcq_questions) * 100 if total_mcq_questions > 0 else 0
+    mcq_score = (correct_answers / total_count) * 100 if total_count > 0 else 0
     overall_score = mcq_score + teacher_scores
 
     return {
-        'total_questions': answers.count(),
+        'total_questions': total_count,
         'correct_answers': correct_answers,
         'mcq_score': mcq_score,
         'teacher_scores': teacher_scores,

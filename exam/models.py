@@ -57,17 +57,6 @@ class Choice(models.Model):
         return self.choice_text
 
 
-class TestProgress(models.Model):
-    test = models.ForeignKey('Test', on_delete=models.CASCADE, related_name='progress')
-    student = models.ForeignKey('User', on_delete=models.CASCADE, related_name='test_progress')
-    start_time = models.DateTimeField(auto_now_add=True)
-    end_time = models.DateTimeField(blank=True, null=True)
-    completed = models.BooleanField(default=False)
-
-    def __str__(self):
-        return f"{self.student.username} - {self.test.title} progress"
-
-
 class AnswerSubmission(models.Model):
     question = models.ForeignKey('Question', on_delete=models.CASCADE, related_name='submitted_answers')
     student = models.ForeignKey('User', on_delete=models.CASCADE, related_name='submitted_answers')
@@ -86,6 +75,7 @@ class CompletedTest(models.Model):
     score = models.FloatField(default=0.0)
     start_time = models.DateTimeField(auto_now_add=True)
     end_time = models.DateTimeField(blank=True, null=True)
+    completed = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.student.username} completed {self.test.title}"

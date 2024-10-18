@@ -1,5 +1,5 @@
 from django.contrib import admin
-from exam.models import User, Course, Test, Question, Choice, AnswerSubmission, CompletedTest, TestProgress
+from exam.models import User, Course, Test, Question, Choice, AnswerSubmission, CompletedTest
 
 
 @admin.register(User)
@@ -47,10 +47,3 @@ class AnswerAdmin(admin.ModelAdmin):
 class CompletedTestAdmin(admin.ModelAdmin):
     list_display = ('id', 'test', 'student', 'start_time', 'end_time')
     search_fields = ('test__name', 'student__username')
-
-
-@admin.register(TestProgress)
-class TestProgressAdmin(admin.ModelAdmin):
-    list_display = ('student', 'test', 'completed')
-    list_filter = ('student', 'test')
-    search_fields = ('student__username', 'test__title')

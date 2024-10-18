@@ -10,7 +10,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Course, CompletedTest, AnswerSubmission, Question, Test, User, Choice, TestProgress
+from .models import Course, CompletedTest, AnswerSubmission, Question, Test, User, Choice
 from .permissions import is_admin, is_teacher, is_student
 from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLoginSerializer, TestSerializer, \
     CourseSerializer, QuestionSerializer
@@ -247,62 +247,110 @@ class QuestionsTestViewSet(viewsets.ViewSet):
         serializer = QuestionSerializer(paginated_questions, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    @swagger_auto_schema(
-        request_body=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                'answer': openapi.Schema(
-                    type=openapi.TYPE_STRING,
-                    description='The student\'s answer (text for open questions or choice ID for MCQ)'
-                )
-            },
-            required=['answer'],
-        ),
-        operation_description="Submit an answer to a particular question",
-        responses={200: "Answer recorded", 400: "Bad Request"}
-    )
-    def answer_question(self, request, test_id, question_id):
-        question = get_object_or_404(Question, id=question_id, test_id=test_id)
-        test_progress, created = TestProgress.objects.get_or_create(
-            test_id=test_id, student=request.user, completed=False
-        )
-        answer_data = request.data.get('answer')
-        if question.question_type == 'mcq':
-            choice = get_object_or_404(Choice, id=answer_data, question=question)
-            AnswerSubmission.objects.create(
-                question=question,
-                student=request.user,
-                selected_choice=choice
-            )
-        elif question.question_type == 'open':
-            AnswerSubmission.objects.create(
-                question=question,
-                student=request.user,
-                answer_text=answer_data
-            )
-        return Response({"message": "Answer recorded"}, status=status.HTTP_200_OK)
-
 
 class TestCompletionViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        operation_description="Finish the test and calculate the result",
-        responses={200: "Test completed", 400: "Bad Request"}
+        operation_description="Finish a test and calculate the result",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'answers': openapi.Schema(
+                    type=openapi.TYPE_ARRAY,
+                    items=openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'question_id': openapi.Schema(type=openapi.TYPE_INTEGER, description="ID of the question"),
+                            'answer_text': openapi.Schema(
+                                type=openapi.TYPE_STRING,
+                                description="Answer text for open-ended questions",
+                                nullable=True
+                            ),
+                            'choice_ids': openapi.Schema(
+                                type=openapi.TYPE_ARRAY,
+                                items=openapi.Schema(type=openapi.TYPE_INTEGER),
+                                description="IDs of selected choices (for MCQ questions only)",
+                                nullable=True
+                            ),
+                        },
+                        required=['question_id'],  # question_id is required
+                        example={
+                            "question_id": 1,
+                            "choice_ids": [1]
+                        }
+                    )
+                ),
+            },
+            required=['answers'],
+            example={
+                "answers": [
+                    {
+                        "question_id": 1,
+                        "choice_ids": [1]
+                    },
+                    {
+                        "question_id": 2,
+                        "answer_text": "This is my answer to the open-ended question"
+                    }
+                ]
+            }
+        ),
+        responses={
+            status.HTTP_200_OK: openapi.Response(
+                description="Test finished and results calculated",
+                examples={
+                    'application/json': {
+                        "message": "Test completed",
+                        "result": {
+                            "overall_score": 85,
+                            "correct_answers": 8,
+                            "wrong_answers": 2
+                        }
+                    }
+                }
+            ),
+            status.HTTP_404_NOT_FOUND: openapi.Response(
+                description="Test not found"
+            ),
+            status.HTTP_400_BAD_REQUEST: openapi.Response(
+                description="Invalid data provided"
+            )
+        }
     )
     def finish_test(self, request, test_id):
-        test_completion = get_object_or_404(TestProgress, test_id=test_id, student=request.user, completed=False)
-        test_completion.completed = True
+        test_completion = get_object_or_404(CompletedTest, test_id=test_id, student=request.user, completed=False)
         test_completion.end_time = timezone.now()
+        answers = request.data.get('answers', [])
+        for answer_data in answers:
+            question_id = answer_data['question_id']
+            question = get_object_or_404(Question, id=question_id)
+            if question.question_type == 'mcq':
+                choice_ids = answer_data.get('choice_ids', [])
+                for choice_id in choice_ids:
+                    choice = get_object_or_404(Choice, id=choice_id, question=question)
+                    AnswerSubmission.objects.create(
+                        student=request.user,
+                        submission_time=test_completion,
+                        question=question,
+                        selected_choice=choice
+                    )
+            elif question.question_type == 'open':
+                answer_text = answer_data.get('answer_text', '')
+                AnswerSubmission.objects.create(
+                    student=request.user,
+                    submission_time=test_completion,
+                    question=question,
+                    answer_text=answer_text
+                )
+            else:
+                return Response({'detail': 'Invalid question type.'}, status=status.HTTP_400_BAD_REQUEST)
+        test_completion.completed = True
+        test_completion.save()
+        result = calculate_test_result(test_completion)
+        test_completion.score = result['overall_score']
         test_completion.save()
 
-        result = calculate_test_result(test_completion)
-
-        CompletedTest.objects.create(
-            test=test_completion.test,
-            student=request.user,
-            score=result['overall_score']
-        )
         return Response({
             "message": "Test completed",
             "result": result
@@ -327,7 +375,7 @@ class TestCompletionViewSet(viewsets.ViewSet):
         responses={200: "Score recorded", 400: "Bad Request"}
     )
     @is_teacher
-    def score_answer(self, request, test_id):
+    def score_answer(self, request, test_id, student_id):
         data = request.data
         question_id = data.get('question_id')
         score = data.get('score')
@@ -335,7 +383,8 @@ class TestCompletionViewSet(viewsets.ViewSet):
             AnswerSubmission,
             question__test__id=test_id,
             question_id=question_id,
-            student__user_type=1
+            student__id=student_id,
+            student__user_type=2
         )
 
         answer_submission.score = score
