@@ -1,16 +1,13 @@
-from unittest import TestResult
-
 from django.db.models import Avg, Max, Min, Sum
 from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from rest_framework import viewsets, status
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import Course, CompletedTest, AnswerSubmission, Question, Test, User, Choice
+from .models import CompletedTest, AnswerSubmission, Question, Test, User, Choice
 from .permissions import is_admin, is_teacher, is_student
 from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLoginSerializer, TestSerializer, \
     CourseSerializer, QuestionSerializer
@@ -77,7 +74,6 @@ class CourseViewSet(viewsets.ViewSet):
     @is_admin
     def create(self, request):
         serializer = CourseCreateSerializer(data=request.data, context={'request': request})
-
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         serializer.save()
@@ -133,7 +129,7 @@ class TestViewSet(viewsets.ViewSet):
                     type=openapi.TYPE_ARRAY,
                     items=openapi.Items(
                         type=openapi.TYPE_OBJECT,
-                        required=['question_text', 'question_type'],  # Marking required fields
+                        required=['question_text', 'question_type'],
                         properties={
                             'question_text': openapi.Schema(
                                 type=openapi.TYPE_STRING,
@@ -233,7 +229,6 @@ class TestViewSet(viewsets.ViewSet):
 
 class QuestionsTestViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
-    pagination_class = PageNumberPagination
 
     @swagger_auto_schema(
         operation_description="List all questions for a particular test with pagination",
@@ -242,10 +237,8 @@ class QuestionsTestViewSet(viewsets.ViewSet):
     def list(self, request, test_id):
         test = get_object_or_404(Test, id=test_id)
         questions = Question.objects.filter(test=test)
-        paginator = self.pagination_class()
-        paginated_questions = paginator.paginate_queryset(questions, request)
-        serializer = QuestionSerializer(paginated_questions, many=True)
-        return paginator.get_paginated_response(serializer.data)
+        serializer = QuestionSerializer(questions, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 class TestCompletionViewSet(viewsets.ViewSet):
@@ -274,7 +267,7 @@ class TestCompletionViewSet(viewsets.ViewSet):
                                 nullable=True
                             ),
                         },
-                        required=['question_id'],  # question_id is required
+                        required=['question_id'],
                         example={
                             "question_id": 1,
                             "choice_ids": [1]
@@ -408,3 +401,35 @@ class TestCompletionViewSet(viewsets.ViewSet):
             "total_questions": result['total_questions'],
             "correct_answers": result['correct_answers'],
         }, status=status.HTTP_200_OK)
+
+
+class TestStatisticsViewSet(viewsets.ViewSet):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={200: openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'average_score': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'highest_score': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'lowest_score': openapi.Schema(type=openapi.TYPE_NUMBER),
+                'total_students': openapi.Schema(type=openapi.TYPE_INTEGER),
+            }
+        )}
+    )
+    @is_teacher
+    def retrieve(self, request, test_id=None):
+        test = get_object_or_404(Test, pk=test_id)
+        if request.user.user_type == 1:
+            if test.creator != request.user:
+                return Response({'detail': 'You are not authorized to view statistics for this test.'},
+                                status=status.HTTP_403_FORBIDDEN)
+        results = CompletedTest.objects.filter(test=test)
+        stats = {
+            'average_score': results.aggregate(Avg('score'))['score__avg'] or 0,
+            'highest_score': results.aggregate(Max('score'))['score__max'] or 0,
+            'lowest_score': results.aggregate(Min('score'))['score__min'] or 0,
+            'total_students': results.count(),
+        }
+
+        return Response(stats, status=status.HTTP_200_OK)
