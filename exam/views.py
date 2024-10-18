@@ -420,10 +420,9 @@ class TestStatisticsViewSet(viewsets.ViewSet):
     @is_teacher
     def retrieve(self, request, test_id=None):
         test = get_object_or_404(Test, pk=test_id)
-        if request.user.user_type == 1:
-            if test.creator != request.user:
-                return Response({'detail': 'You are not authorized to view statistics for this test.'},
-                                status=status.HTTP_403_FORBIDDEN)
+        if test.creator != request.user:
+            return Response({'detail': 'You are not authorized to view statistics for this test.'},
+                            status=status.HTTP_403_FORBIDDEN)
         results = CompletedTest.objects.filter(test=test)
         stats = {
             'average_score': results.aggregate(Avg('score'))['score__avg'] or 0,
