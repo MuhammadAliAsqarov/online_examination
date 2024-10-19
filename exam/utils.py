@@ -83,6 +83,17 @@ def check_deadline(test):
         return Response({'detail': 'Deadline ended.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
+def answers_func(answers, test_completion):
+    for answer_data in answers:
+        question = get_object_or_404(Question, id=answer_data['question_id'])
+        process_answer(question, answer_data, test_completion)
+    test_completion.completed = True
+    test_completion.save()
+    result = calculate_test_result(test_completion)
+    test_completion.score = result['overall_score']
+    test_completion.save()
+    return result
+
 def start_test(user, test, start_time, end_time):
     completed_test = CompletedTest.objects.create(
         test=test,

@@ -15,7 +15,7 @@ from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLog
     CourseSerializer, QuestionSerializer, TestCreateSerializer, FinishTestSerializer, QuestionListSerializer, \
     AnswerSubmissionSerializer
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    calculate_test_result, process_answer, check_permission, check_test
+    calculate_test_result, process_answer, check_permission, check_test, answers_func
 
 
 class UserViewSet(viewsets.ViewSet):
@@ -215,14 +215,7 @@ class TestCompletionViewSet(viewsets.ViewSet):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         answers = serializer.validated_data['answers']
-        for answer_data in answers:
-            question = get_object_or_404(Question, id=answer_data['question_id'])
-            process_answer(question, answer_data, test_completion)
-        test_completion.completed = True
-        test_completion.save()
-        result = calculate_test_result(test_completion)
-        test_completion.score = result['overall_score']
-        test_completion.save()
+        result = answers_func(answers, test_completion)
         return Response({
             "message": "Test completed",
             "result": result
