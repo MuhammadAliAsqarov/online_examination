@@ -36,24 +36,53 @@ class CourseSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'teacher']
 
 
+class ChoiceListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Choice
+        fields = ['choice_text']
+
+
+class QuestionListSerializer(serializers.ModelSerializer):
+    choices = ChoiceListSerializer(many=True, required=False)
+
+    class Meta:
+        model = Question
+        fields = ['question_text', 'question_type', 'choices']
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        if instance.question_type == 'open':
+            representation.pop('choices', None)
+        elif instance.question_type == 'mcq':
+
+            pass
+
+        return representation
+
 class ChoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Choice
         fields = ['choice_text', 'is_correct']
 
 
-class ChoiceTestSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Choice
-        fields = ['choice_text']
-
-
 class QuestionSerializer(serializers.ModelSerializer):
-    choices = ChoiceTestSerializer(many=True, required=False)
+    choices = ChoiceSerializer(many=True, required=False)
 
     class Meta:
         model = Question
         fields = ['question_text', 'question_type', 'choices']
+
+    def validate(self, data):
+        question_type = data.get('question_type')
+        choices = data.get('choices', [])
+
+        if question_type == 'mcq' and not choices:
+            raise serializers.ValidationError("Multiple-choice questions must have choices.")
+
+        if question_type == 'open' and choices:
+            raise serializers.ValidationError("Open-ended questions should not have choices.")
+
+        return data
 
 
 class TestSerializer(serializers.ModelSerializer):
@@ -64,13 +93,67 @@ class TestSerializer(serializers.ModelSerializer):
         model = Test
         fields = ['course', 'creator', 'title', 'time_limit', 'deadline']
 
+
+class TestCreateSerializer(serializers.ModelSerializer):
+    questions = QuestionSerializer(many=True, required=False)
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all())
+    creator = serializers.StringRelatedField(read_only=True)
+
+    class Meta:
+        model = Test
+        fields = ['course', 'creator', 'title', 'time_limit', 'deadline', 'questions']
+
     def validate_deadline(self, value):
         if value <= datetime.now():
             raise serializers.ValidationError("The deadline must be in the future.")
         return value
 
     def create(self, validated_data):
+        questions_data = validated_data.pop('questions', [])
         creator = self.context['request'].user
         validated_data['creator'] = creator
         test = Test.objects.create(**validated_data)
+        for question_data in questions_data:
+            choices_data = question_data.pop('choices', [])
+            question = Question.objects.create(test=test, **question_data)
+            for choice_data in choices_data:
+                Choice.objects.create(question=question, **choice_data)
         return test
+
+
+class AnswerSerializer(serializers.Serializer):
+    question_id = serializers.IntegerField()
+    answer_text = serializers.CharField(required=False, allow_blank=True)
+    choice_id = serializers.IntegerField(required=False)
+
+    def validate(self, data):
+        question_id = data.get('question_id')
+        answer_text = data.get('answer_text')
+        choice_id = data.get('choice_id')
+
+        question = Question.objects.filter(id=question_id).first()
+        if not question:
+            raise serializers.ValidationError(f"Question with id {question_id} does not exist.")
+
+        if question.question_type == 'mcq':
+            if choice_id is None:
+                raise serializers.ValidationError(f"Choice ID must be provided for multiple-choice questions.")
+            if answer_text:
+                raise serializers.ValidationError(f"Answer text should not be provided for multiple-choice questions.")
+
+        elif question.question_type == 'open':
+            if not answer_text:
+                raise serializers.ValidationError(f"Answer text must be provided for open-ended questions.")
+            if choice_id is not None:
+                raise serializers.ValidationError(f"Choice ID should not be provided for open-ended questions.")
+
+        return data
+
+
+class FinishTestSerializer(serializers.Serializer):
+    answers = AnswerSerializer(many=True)
+
+    def validate_answers(self, value):
+        if not value:
+            raise serializers.ValidationError("Answers list cannot be empty.")
+        return value
