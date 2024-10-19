@@ -163,7 +163,7 @@ class FinishTestSerializer(serializers.Serializer):
 class AnswerSubmissionSerializer(serializers.ModelSerializer):
     question_text = serializers.CharField(source='question.question_text', read_only=True)
     question_id = serializers.IntegerField(source='question.id', read_only=True)
-    score = serializers.IntegerField(required=False)
+    score = serializers.FloatField(required=False)
 
     class Meta:
         model = AnswerSubmission
