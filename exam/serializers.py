@@ -42,8 +42,14 @@ class ChoiceSerializer(serializers.ModelSerializer):
         fields = ['choice_text', 'is_correct']
 
 
+class ChoiceTestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Choice
+        fields = ['choice_text']
+
+
 class QuestionSerializer(serializers.ModelSerializer):
-    choices = ChoiceSerializer(many=True, required=False)
+    choices = ChoiceTestSerializer(many=True, required=False)
 
     class Meta:
         model = Question

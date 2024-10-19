@@ -13,7 +13,7 @@ from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLog
     CourseSerializer, QuestionSerializer
 from .swagger_utils import test_schema, finish_test_schema
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    create_question, calculate_test_result, process_answer
+    create_question, calculate_test_result, process_answer, check_permission, check_test
 
 
 class UserViewSet(viewsets.ViewSet):
@@ -144,16 +144,10 @@ class TestViewSet(viewsets.ViewSet):
     def access_test(self, request, test_id=None):
         user = request.user
         test = get_object_or_404(Test, pk=test_id)
+        check_permission(user, test)
         check_deadline(test)
         test_completion = CompletedTest.objects.filter(test=test, student=user).first()
-        if test_completion:
-            if test_completion.end_time and timezone.now() > test_completion.end_time:
-                return Response({'detail': 'Test is already over.'}, status=status.HTTP_400_BAD_REQUEST)
-            if not test_completion.end_time or timezone.now() < test_completion.end_time:
-                return Response({
-                    'detail': 'Test already started.',
-                    'end_time': test_completion.end_time
-                }, status=status.HTTP_200_OK)
+        check_test(test_completion)
         start_time = timezone.now()
         end_time = start_time + test.time_limit
         test_completion = start_test(user, test, start_time, end_time)

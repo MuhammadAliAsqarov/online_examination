@@ -3,7 +3,7 @@ from django.utils import timezone
 
 from django.shortcuts import get_object_or_404
 from rest_framework import status
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.response import Response
 from .models import Course, Question, Test, CompletedTest, Choice, AnswerSubmission
 
@@ -83,6 +83,22 @@ def create_choices(question, choices_data):
             choice_text=choice_data.get('choice_text'),
             is_correct=choice_data.get('is_correct', False)
         )
+
+
+def check_permission(user, test):
+    if test.course not in user.enrolled_courses.all():
+        raise PermissionDenied({"detail": "Permission denied"})
+
+
+def check_test(test_completion):
+    if test_completion:
+        if test_completion.end_time and timezone.now() > test_completion.end_time:
+            raise PermissionDenied({'detail': 'Test is already over.'})
+        if not test_completion.end_time or timezone.now() < test_completion.end_time:
+            raise PermissionDenied({
+                'detail': 'Test already started.',
+                'end_time': test_completion.end_time
+            })
 
 
 def check_deadline(test):
