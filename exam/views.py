@@ -265,7 +265,6 @@ class TestCompletionViewSet(viewsets.ViewSet):
         data = request.data
         question_id = data.get('question_id')
         score = data.get('score')
-
         answer_submission = get_object_or_404(
             AnswerSubmission,
             question__test__id=test_id,
@@ -274,7 +273,6 @@ class TestCompletionViewSet(viewsets.ViewSet):
         )
         if answer_submission.question.question_type != 'open':
             return Response({"error": "Only open questions can be scored."}, status=status.HTTP_400_BAD_REQUEST)
-
         answer_submission.grade_by_teacher = score
         answer_submission.save()
         return Response({"message": "Score recorded"}, status=status.HTTP_200_OK)
@@ -287,7 +285,6 @@ class TestCompletionViewSet(viewsets.ViewSet):
     def get_overall_score(self, request, test_id):
         completed_test = get_object_or_404(CompletedTest, test_id=test_id, student=request.user)
         result = calculate_test_result(completed_test)
-
         return Response({
             "message": "Score retrieved",
             "total_questions": result['total_questions'],
