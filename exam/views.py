@@ -15,7 +15,7 @@ from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLog
     CourseSerializer, QuestionSerializer, TestCreateSerializer, FinishTestSerializer, QuestionListSerializer, \
     AnswerSubmissionSerializer
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    calculate_test_result, process_answer, check_permission, check_test, answers_func
+    calculate_test_result, check_permission, check_test, answers_func
 
 
 class UserViewSet(viewsets.ViewSet):

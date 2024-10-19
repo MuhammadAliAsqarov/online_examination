@@ -94,6 +94,7 @@ def answers_func(answers, test_completion):
     test_completion.save()
     return result
 
+
 def start_test(user, test, start_time, end_time):
     completed_test = CompletedTest.objects.create(
         test=test,
