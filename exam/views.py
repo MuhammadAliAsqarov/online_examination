@@ -7,13 +7,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-from .models import CompletedTest, AnswerSubmission, Question, Test, User, Choice
+from .models import CompletedTest, AnswerSubmission, Question, Test, User
 from .permissions import is_admin, is_teacher, is_student
 from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLoginSerializer, TestSerializer, \
     CourseSerializer, QuestionSerializer
 from .swagger_utils import test_schema, finish_test_schema
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    create_question, calculate_test_result
+    create_question, calculate_test_result, process_answer
 
 
 class UserViewSet(viewsets.ViewSet):
@@ -206,38 +206,19 @@ class TestCompletionViewSet(viewsets.ViewSet):
         }
     )
     def finish_test(self, request, test_id):
-        test_completion = get_object_or_404(CompletedTest, test_id=test_id, student=request.user, completed=False)
+        test_completion = get_object_or_404(
+            CompletedTest, test_id=test_id, student=request.user, completed=False
+        )
         test_completion.end_time = timezone.now()
         answers = request.data.get('answers', [])
         for answer_data in answers:
-            question_id = answer_data['question_id']
-            question = get_object_or_404(Question, id=question_id)
-            if question.question_type == 'mcq':
-                choice_ids = answer_data.get('choice_ids', [])
-                for choice_id in choice_ids:
-                    choice = get_object_or_404(Choice, id=choice_id, question=question)
-                    AnswerSubmission.objects.create(
-                        student=request.user,
-                        submission_time=test_completion,
-                        question=question,
-                        selected_choice=choice
-                    )
-            elif question.question_type == 'open':
-                answer_text = answer_data.get('answer_text', '')
-                AnswerSubmission.objects.create(
-                    student=request.user,
-                    submission_time=test_completion,
-                    question=question,
-                    answer_text=answer_text
-                )
-            else:
-                return Response({'detail': 'Invalid question type.'}, status=status.HTTP_400_BAD_REQUEST)
+            question = get_object_or_404(Question, id=answer_data['question_id'])
+            process_answer(question, answer_data, test_completion)
         test_completion.completed = True
         test_completion.save()
         result = calculate_test_result(test_completion)
         test_completion.score = result['overall_score']
         test_completion.save()
-
         return Response({
             "message": "Test completed",
             "result": result

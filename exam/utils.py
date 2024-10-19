@@ -3,6 +3,7 @@ from django.utils import timezone
 
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from .models import Course, Question, Test, CompletedTest, Choice, AnswerSubmission
 
@@ -119,3 +120,34 @@ def calculate_test_result(test_completion):
         'teacher_scores': teacher_scores,
         'overall_score': overall_score,
     }
+
+
+def process_answer(question, answer_data, test_completion):
+    if question.question_type == 'mcq':
+        process_mcq_answer(question, answer_data, test_completion)
+    elif question.question_type == 'open':
+        process_open_answer(question, answer_data, test_completion)
+    else:
+        raise ValidationError({'detail': 'Invalid question type.'})
+
+
+def process_mcq_answer(question, answer_data, test_completion):
+    choice_ids = answer_data.get('choice_ids', [])
+    for choice_id in choice_ids:
+        choice = get_object_or_404(Choice, id=choice_id, question=question)
+        AnswerSubmission.objects.create(
+            student=test_completion.student,
+            submission_time=test_completion,
+            question=question,
+            selected_choice=choice
+        )
+
+
+def process_open_answer(question, answer_data, test_completion):
+    answer_text = answer_data.get('answer_text', '')
+    AnswerSubmission.objects.create(
+        student=test_completion.student,
+        submission_time=test_completion,
+        question=question,
+        answer_text=answer_text
+    )
