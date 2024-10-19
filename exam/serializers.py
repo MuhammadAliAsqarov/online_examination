@@ -59,6 +59,7 @@ class QuestionListSerializer(serializers.ModelSerializer):
 
         return representation
 
+
 class ChoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Choice
@@ -157,3 +158,19 @@ class FinishTestSerializer(serializers.Serializer):
         if not value:
             raise serializers.ValidationError("Answers list cannot be empty.")
         return value
+
+
+class AnswerSubmissionSerializer(serializers.ModelSerializer):
+    question_text = serializers.CharField(source='question.question_text', read_only=True)
+    question_id = serializers.IntegerField(source='question.id', read_only=True)
+    score = serializers.IntegerField(required=False)
+
+    class Meta:
+        model = AnswerSubmission
+        fields = ['question_id', 'question_text', 'score']
+
+    def validate(self, data):
+        question = self.instance.question
+        if question.question_type != 'open':
+            raise serializers.ValidationError("Only open questions can be scored.")
+        return data

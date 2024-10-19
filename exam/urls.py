@@ -18,8 +18,9 @@ urlpatterns = [
     path('tests/<int:test_id>/questions/',
          QuestionsTestViewSet.as_view({'get': 'list'})),
     path('tests/<int:test_id>/finish/', TestCompletionViewSet.as_view({'post': 'finish_test'})),
+    path('tests/<int:test_id>/students/<int:student_id>/answers/', TestCompletionViewSet.as_view({'get': 'list'})),
     path('tests/<int:test_id>/student/<int:student_id>/score/',
          TestCompletionViewSet.as_view({'post': 'score_answer'})),
     path('tests/<int:test_id>/score/overall/', TestCompletionViewSet.as_view({'get': 'get_overall_score'})),
-    path('tests/<int:test_id>/statistics/', TestStatisticsViewSet.as_view({'get': 'retrieve'}), name='test-statistics'),
+    path('tests/<int:test_id>/statistics/', TestStatisticsViewSet.as_view({'get': 'retrieve'}))
 ]
