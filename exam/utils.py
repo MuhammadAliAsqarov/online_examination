@@ -62,29 +62,6 @@ def check_for_test(func):
     return wrapper
 
 
-def create_question(test, question_data):
-    question_text = question_data.get('question_text')
-    question_type = question_data.get('question_type')
-
-    question = Question.objects.create(
-        test=test,
-        question_text=question_text,
-        question_type=question_type
-    )
-    if question_type == 'mcq':
-        create_choices(question, question_data.get('choices', []))
-    return question
-
-
-def create_choices(question, choices_data):
-    for choice_data in choices_data:
-        Choice.objects.create(
-            question=question,
-            choice_text=choice_data.get('choice_text'),
-            is_correct=choice_data.get('is_correct', False)
-        )
-
-
 def check_permission(user, test):
     if test.course not in user.enrolled_courses.all():
         raise PermissionDenied({"detail": "Permission denied"})
@@ -131,7 +108,6 @@ def calculate_test_result(test_completion):
 
     return {
         'total_questions': total_count,
-        'correct_answers': correct_answers,
         'mcq_score': mcq_score,
         'teacher_scores': teacher_scores,
         'overall_score': overall_score,

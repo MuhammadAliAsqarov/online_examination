@@ -7,13 +7,15 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from .custom_pagination import CustomPagination
 from .models import CompletedTest, AnswerSubmission, Question, Test, User
 from .permissions import is_admin, is_teacher, is_student
 from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLoginSerializer, TestSerializer, \
-    CourseSerializer, QuestionSerializer
-from .swagger_utils import test_schema, finish_test_schema
+    CourseSerializer, QuestionSerializer, TestCreateSerializer, FinishTestSerializer, QuestionListSerializer, \
+    AnswerSubmissionSerializer
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    create_question, calculate_test_result, process_answer, check_permission, check_test
+    calculate_test_result, process_answer, check_permission, check_test
 
 
 class UserViewSet(viewsets.ViewSet):
@@ -103,7 +105,7 @@ class TestViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        request_body=test_schema,
+        request_body=TestCreateSerializer,
         responses={
             201: openapi.Response(
                 description='Test created successfully',
@@ -117,13 +119,10 @@ class TestViewSet(viewsets.ViewSet):
     @is_teacher
     def create(self, request):
         data = request.data
-        test_serializer = TestSerializer(data=data, context={'request': request})
+        test_serializer = TestCreateSerializer(data=data, context={'request': request})
         if not test_serializer.is_valid():
             return Response(test_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         test = test_serializer.save()
-        questions_data = data.get('questions', [])
-        for question_data in questions_data:
-            create_question(test, question_data)
         response_data = TestSerializer(test).data
         return Response(response_data, status=status.HTTP_201_CREATED)
 
@@ -165,10 +164,18 @@ class QuestionsTestViewSet(viewsets.ViewSet):
         responses={200: QuestionSerializer(many=True)}
     )
     def list(self, request, test_id):
-        test = get_object_or_404(Test, id=test_id)
-        questions = Question.objects.filter(test=test)
-        serializer = QuestionSerializer(questions, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        user = request.user
+        get_object_or_404(
+            CompletedTest,
+            student=user,
+            test_id=test_id,
+            completed=False
+        )
+        questions = Question.objects.filter(test_id=test_id)
+        paginator = CustomPagination()
+        paginated_questions = paginator.paginate_queryset(questions, request)
+        serializer = QuestionListSerializer(paginated_questions, many=True)
+        return paginator.get_paginated_response(serializer.data)
 
 
 class TestCompletionViewSet(viewsets.ViewSet):
@@ -176,7 +183,7 @@ class TestCompletionViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(
         operation_description="Finish a test and calculate the result",
-        request_body=finish_test_schema,
+        request_body=FinishTestSerializer,
         responses={
             status.HTTP_200_OK: openapi.Response(
                 description="Test finished and results calculated",
@@ -204,7 +211,10 @@ class TestCompletionViewSet(viewsets.ViewSet):
             CompletedTest, test_id=test_id, student=request.user, completed=False
         )
         test_completion.end_time = timezone.now()
-        answers = request.data.get('answers', [])
+        serializer = FinishTestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        answers = serializer.validated_data['answers']
         for answer_data in answers:
             question = get_object_or_404(Question, id=answer_data['question_id'])
             process_answer(question, answer_data, test_completion)
@@ -219,7 +229,21 @@ class TestCompletionViewSet(viewsets.ViewSet):
         }, status=status.HTTP_200_OK)
 
     @swagger_auto_schema(
-        operation_description="Score the answers of a student for a specific test",
+        operation_description="Get paginated answers for a specific test and score them",
+        responses={200: AnswerSubmissionSerializer(many=True)},
+    )
+    @is_teacher
+    def list(self, request, test_id, student_id):
+        answer_submissions = AnswerSubmission.objects.filter(
+            question__test__id=test_id,
+            student__id=student_id
+        )
+        paginator = CustomPagination()
+        paginated_answer_submissions = paginator.paginate_queryset(answer_submissions, request)
+        serializer = AnswerSubmissionSerializer(paginated_answer_submissions, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+    @swagger_auto_schema(
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
@@ -241,15 +265,17 @@ class TestCompletionViewSet(viewsets.ViewSet):
         data = request.data
         question_id = data.get('question_id')
         score = data.get('score')
+
         answer_submission = get_object_or_404(
             AnswerSubmission,
             question__test__id=test_id,
             question_id=question_id,
-            student__id=student_id,
-            student__user_type=2
+            student__id=student_id
         )
+        if answer_submission.question.question_type != 'open':
+            return Response({"error": "Only open questions can be scored."}, status=status.HTTP_400_BAD_REQUEST)
 
-        answer_submission.score = score
+        answer_submission.grade_by_teacher = score
         answer_submission.save()
         return Response({"message": "Score recorded"}, status=status.HTTP_200_OK)
 
@@ -264,11 +290,10 @@ class TestCompletionViewSet(viewsets.ViewSet):
 
         return Response({
             "message": "Score retrieved",
-            "overall_score": result['overall_score'],
+            "total_questions": result['total_questions'],
             "mcq_score": result['mcq_score'],
             "teacher_scores": result['teacher_scores'],
-            "total_questions": result['total_questions'],
-            "correct_answers": result['correct_answers'],
+            "overall_score": result['overall_score'],
         }, status=status.HTTP_200_OK)
 
 
