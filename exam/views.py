@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-
+from .tasks import stop_test_completion
 from .custom_pagination import CustomPagination
 from .models import CompletedTest, AnswerSubmission, Question, Test, User
 from .permissions import is_admin, is_teacher, is_student
@@ -149,7 +149,13 @@ class TestViewSet(viewsets.ViewSet):
         check_test(test_completion)
         start_time = timezone.now()
         end_time = start_time + test.time_limit
+
         test_completion = start_test(user, test, start_time, end_time)
+        stop_test_completion.apply_async(
+            (test_completion.id,),
+            eta=end_time
+        )
+
         return Response({
             'detail': 'Test accessed and started',
             'end_time': test_completion.end_time
