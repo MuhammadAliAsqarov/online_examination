@@ -70,6 +70,8 @@ def check_permission(user, test):
 def check_test(test_completion):
     if test_completion:
         if test_completion.end_time and timezone.now() > test_completion.end_time:
+            test_completion.completed = True
+            test_completion.save()
             raise PermissionDenied({'detail': 'Test is already over.'})
         if not test_completion.end_time or timezone.now() < test_completion.end_time:
             raise PermissionDenied({
@@ -100,7 +102,8 @@ def start_test(user, test, start_time, end_time):
         test=test,
         student=user,
         start_time=start_time,
-        end_time=end_time
+        end_time=end_time,
+        completed=False
     )
     completed_test.end_time = completed_test.start_time + test.time_limit
     completed_test.save()
