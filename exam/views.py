@@ -18,7 +18,7 @@ from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLog
     CourseSerializer, QuestionSerializer, TestCreateSerializer, FinishTestSerializer, QuestionListSerializer, \
     AnswerSubmissionSerializer
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    calculate_test_result, check_permission, check_test, answers_func
+    calculate_test_result, check_permission, check_test, answers_func, test_stats
 
 
 class UserViewSet(viewsets.ViewSet):
@@ -315,14 +315,21 @@ class TestStatisticsViewSet(viewsets.ViewSet):
     def retrieve(self, request, test_id=None):
         test = get_object_or_404(Test, pk=test_id)
         if test.creator != request.user:
-            raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value,
-                                     message={'detail': 'You are not authorized to view this test'})
+            raise CustomApiException(
+                error_code=ErrorCodes.FORBIDDEN.value,
+                message={'detail': 'You are not authorized to view this test'}
+            )
         results = CompletedTest.objects.filter(test=test)
+        all_scores = []
+        for result in results:
+            overall_score = test_stats(result)
+            all_scores.append(overall_score)
+            result.score = overall_score
+            result.save()
         stats = {
-            'average_score': results.aggregate(Avg('score'))['score__avg'] or 0,
-            'highest_score': results.aggregate(Max('score'))['score__max'] or 0,
-            'lowest_score': results.aggregate(Min('score'))['score__min'] or 0,
-            'total_students': results.count(),
+            'average_score': sum(all_scores) / len(all_scores) if all_scores else 0,
+            'highest_score': max(all_scores) if all_scores else 0,
+            'lowest_score': min(all_scores) if all_scores else 0,
+            'total_students': len(all_scores),
         }
-
         return Response(stats, status=status.HTTP_200_OK)

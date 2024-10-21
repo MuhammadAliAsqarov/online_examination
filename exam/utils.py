@@ -157,3 +157,16 @@ def process_open_answer(question, answer_data, test_completion):
         question=question,
         answer_text=answer_text
     )
+
+
+def test_stats(test_completion):
+    answers = AnswerSubmission.objects.filter(
+        question__test=test_completion.test,
+        student=test_completion.student
+    )
+    total_count = answers.count()
+    correct_answers = answers.filter(selected_choice__is_correct=True).count()
+    teacher_scores = answers.aggregate(Sum('grade_by_teacher'))['grade_by_teacher__sum'] or 0
+    mcq_score = (correct_answers / total_count) * 100 if total_count > 0 else 0
+    overall_score = mcq_score + teacher_scores
+    return overall_score
