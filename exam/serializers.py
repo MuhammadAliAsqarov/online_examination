@@ -21,7 +21,7 @@ class UserLoginSerializer(serializers.Serializer):
 
 class CourseCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
-    teacher_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(user_type=2))
+    teacher = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(user_type=2))
 
     def create(self, validated_data):
         course = Course.objects.create(**validated_data)
@@ -94,6 +94,20 @@ class TestSerializer(serializers.ModelSerializer):
         model = Test
         fields = ['course', 'creator', 'title', 'time_limit', 'deadline']
 
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        student = self.context.get('student')
+
+        if student:
+            completion = CompletedTest.objects.filter(test=instance, student=student).first()
+            if completion:
+                representation['completed'] = completion.completed
+            else:
+                representation['completed'] = False
+        else:
+            representation['completed'] = None
+
+        return representation
 
 class TestCreateSerializer(serializers.ModelSerializer):
     questions = QuestionSerializer(many=True, required=False)

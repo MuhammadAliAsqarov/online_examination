@@ -1,4 +1,4 @@
-from django.db.models import Avg, Max, Min, Sum
+from django.db.models import Avg, Max, Min
 from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -7,6 +7,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
+
+from exceptions.error_codes import ErrorCodes
+from exceptions.exception import CustomApiException
 # from .tasks import stop_test_completion
 from .custom_pagination import CustomPagination
 from .models import CompletedTest, AnswerSubmission, Question, Test, User
@@ -56,8 +59,7 @@ class UserViewSet(viewsets.ViewSet):
         user = User.objects.filter(username=username).first()
 
         if not user or not user.check_password(password):
-            return Response({'detail': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
-
+            raise CustomApiException(error_code=ErrorCodes.USER_DOES_NOT_EXIST.value)
         refresh = RefreshToken.for_user(user)
         return Response({
             'refresh': str(refresh),
@@ -132,7 +134,7 @@ class TestViewSet(viewsets.ViewSet):
     )
     @check_for_test
     def list(self, request, tests):
-        serializer = TestSerializer(tests, many=True)
+        serializer = TestSerializer(tests, many=True, context={'student': request.user})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     @swagger_auto_schema(
@@ -271,8 +273,8 @@ class TestCompletionViewSet(viewsets.ViewSet):
             student__id=student_id
         )
         if answer_submission.question.question_type != 'open':
-            return Response({"error": "Only open questions can be scored."}, status=status.HTTP_400_BAD_REQUEST)
-
+            raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value,
+                                     message={'detail': 'Only open questions can be scored'})
         answer_submission.grade_by_teacher = score
         answer_submission.save()
         return Response({"message": "Score recorded"}, status=status.HTTP_200_OK)
@@ -313,8 +315,8 @@ class TestStatisticsViewSet(viewsets.ViewSet):
     def retrieve(self, request, test_id=None):
         test = get_object_or_404(Test, pk=test_id)
         if test.creator != request.user:
-            return Response({'detail': 'You are not authorized to view statistics for this test.'},
-                            status=status.HTTP_403_FORBIDDEN)
+            raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value,
+                                     message={'detail': 'You are not authorized to view this test'})
         results = CompletedTest.objects.filter(test=test)
         stats = {
             'average_score': results.aggregate(Avg('score'))['score__avg'] or 0,

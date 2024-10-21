@@ -5,6 +5,9 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.response import Response
+
+from exceptions.error_codes import ErrorCodes
+from exceptions.exception import CustomApiException
 from .models import Course, Question, Test, CompletedTest, Choice, AnswerSubmission
 
 
@@ -18,8 +21,7 @@ def check_for_course(func):
         elif request.user.is_authenticated and request.user.user_type == 3:
             courses = Course.objects.all()
         else:
-            return Response(data={'error': 'You dont have permissions to perform this action'},
-                            status=status.HTTP_403_FORBIDDEN)
+            raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value)
 
         return func(self, request, courses, *args, **kwargs)
 
@@ -36,8 +38,7 @@ def check_course_retrieve(func):
             return func(self, request, course, *args, **kwargs)
         if user.user_type == 1 and user.enrolled_courses.filter(pk=course.pk).exists():
             return func(self, request, course, *args, **kwargs)
-        return Response(data={"detail": "You do not have permission to view this course."},
-                        status=status.HTTP_403_FORBIDDEN)
+        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value)
 
     return wrapper
 
@@ -56,15 +57,14 @@ def check_for_test(func):
             tests = Test.objects.all()
             return func(self, request, tests, *args, **kwargs)
         else:
-            return Response(data={"detail": "You do not have permission to view this course."},
-                            status=status.HTTP_403_FORBIDDEN)
+            raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value)
 
     return wrapper
 
 
 def check_permission(user, test):
     if test.course not in user.enrolled_courses.all():
-        raise PermissionDenied({"detail": "Permission denied"})
+        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value)
 
 
 def check_test(test_completion):
@@ -72,17 +72,16 @@ def check_test(test_completion):
         if test_completion.end_time and timezone.now() > test_completion.end_time:
             test_completion.completed = True
             test_completion.save()
-            raise PermissionDenied({'detail': 'Test is already over.'})
+            raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value, message={'detail': 'Test already over'})
         if not test_completion.end_time or timezone.now() < test_completion.end_time:
-            raise PermissionDenied({
-                'detail': 'Test already started.',
-                'end_time': test_completion.end_time
-            })
+            raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value,
+                                     message={'detail': 'Test already started.',
+                                              'end_time': test_completion.end_time})
 
 
 def check_deadline(test):
     if timezone.now() > test.deadline:
-        return Response({'detail': 'Deadline ended.'}, status=status.HTTP_400_BAD_REQUEST)
+        raise CustomApiException(error_code=ErrorCodes.INVALID_INPUT.value, message={'detail': 'Deadline ended.'})
 
 
 def answers_func(answers, test_completion):
@@ -135,19 +134,19 @@ def process_answer(question, answer_data, test_completion):
     elif question.question_type == 'open':
         process_open_answer(question, answer_data, test_completion)
     else:
-        raise ValidationError({'detail': 'Invalid question type.'})
+        raise CustomApiException(error_code=ErrorCodes.INVALID_INPUT.value,
+                                 message={'detail': 'Invalid question type.'})
 
 
 def process_mcq_answer(question, answer_data, test_completion):
-    choice_ids = answer_data.get('choice_ids', [])
-    for choice_id in choice_ids:
-        choice = get_object_or_404(Choice, id=choice_id, question=question)
-        AnswerSubmission.objects.create(
-            student=test_completion.student,
-            submission_time=test_completion,
-            question=question,
-            selected_choice=choice
-        )
+    choice_id = answer_data.get('choice_id')
+    choice = get_object_or_404(Choice, id=choice_id, question=question)
+    AnswerSubmission.objects.create(
+        student=test_completion.student,
+        submission_time=test_completion,
+        question=question,
+        selected_choice=choice
+    )
 
 
 def process_open_answer(question, answer_data, test_completion):

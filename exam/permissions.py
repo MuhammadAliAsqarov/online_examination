@@ -9,7 +9,8 @@ def is_admin(func):
         elif request.user.user_type == 3:
             return func(self, request, *args, **kwargs)
 
-        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value)
+        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value,
+                                 message="You are not authorized to access this api")
 
     return wrapper
 
@@ -21,7 +22,8 @@ def is_teacher(func):
         elif request.user.user_type == 2:
             return func(self, request, *args, **kwargs)
 
-        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value)
+        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value,
+                                 message="You are not authorized to access this api")
 
     return wrapper
 
@@ -33,6 +35,7 @@ def is_student(func):
         elif request.user.user_type == 1:
             return func(self, request, *args, **kwargs)
 
-        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value)
+        raise CustomApiException(error_code=ErrorCodes.FORBIDDEN.value,
+                                 message="You are not authorized to access this api")
 
     return wrapper
