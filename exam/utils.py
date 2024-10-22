@@ -160,3 +160,14 @@ def process_open_answer(question, answer_data, test_completion):
         question=question,
         answer_text=answer_text
     )
+
+
+def all_score_func(results):
+    all_scores = []
+    for result in results:
+        test_result = calculate_test_result(result)
+        overall_score = test_result['overall_score']
+        all_scores.append(overall_score)
+        result.score = overall_score
+        result.save()
+    return all_scores

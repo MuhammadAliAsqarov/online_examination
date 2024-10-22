@@ -16,7 +16,7 @@ from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLog
     CourseSerializer, QuestionSerializer, TestCreateSerializer, FinishTestSerializer, QuestionListSerializer, \
     AnswerSubmissionSerializer, EnrollmentSerializer
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    calculate_test_result, check_permission, check_test, answers_func
+    calculate_test_result, check_permission, check_test, answers_func, all_score_func
 from .utils_cache import get_cache_key_stats, get_overall_score_cache_key
 from django.core.cache import cache
 
@@ -339,7 +339,7 @@ class TestStatisticsViewSet(viewsets.ViewSet):
         )}
     )
     @is_teacher
-    def retrieve(self, request, test_id=None):
+    def retrieve(self, request, test_id):
         test = get_object_or_404(Test, pk=test_id)
         if test.creator != request.user:
             raise CustomApiException(
@@ -351,13 +351,7 @@ class TestStatisticsViewSet(viewsets.ViewSet):
         if cached_data:
             return Response(cached_data, status=status.HTTP_200_OK)
         results = CompletedTest.objects.filter(test=test)
-        all_scores = []
-        for result in results:
-            test_result = calculate_test_result(result)
-            overall_score = test_result['overall_score']
-            all_scores.append(overall_score)
-            result.score = overall_score
-            result.save()
+        all_scores = all_score_func(results)
         stats = {
             'average_score': sum(all_scores) / len(all_scores) if all_scores else 0,
             'highest_score': max(all_scores) if all_scores else 0,
