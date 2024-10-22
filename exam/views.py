@@ -1,4 +1,3 @@
-from django.db.models import Avg, Max, Min
 from django.shortcuts import get_object_or_404
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
@@ -7,18 +6,17 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
 from rest_framework_simplejwt.tokens import RefreshToken
-
 from exceptions.error_codes import ErrorCodes
 from exceptions.exception import CustomApiException
 # from .tasks import stop_test_completion
-from .custom_pagination import CustomPagination
+from .custom_pagination import CustomPagination, CustomPaginationCourse
 from .models import CompletedTest, AnswerSubmission, Question, Test, User
 from .permissions import is_admin, is_teacher, is_student
 from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLoginSerializer, TestSerializer, \
     CourseSerializer, QuestionSerializer, TestCreateSerializer, FinishTestSerializer, QuestionListSerializer, \
-    AnswerSubmissionSerializer
+    AnswerSubmissionSerializer, EnrollmentSerializer
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
-    calculate_test_result, check_permission, check_test, answers_func, test_stats
+    calculate_test_result, check_permission, check_test, answers_func
 
 
 class UserViewSet(viewsets.ViewSet):
@@ -99,8 +97,32 @@ class CourseViewSet(viewsets.ViewSet):
     )
     @check_for_course
     def list(self, request, courses):
-        serializer = CourseSerializer(courses, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        if not request.user.user_type == 3:
+            serializer = CourseSerializer(courses, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        paginator = CustomPaginationCourse()
+        paginated_questions = paginator.paginate_queryset(courses, request)
+        serializer = CourseSerializer(paginated_questions, many=True)
+        return paginator.get_paginated_response(serializer.data)
+
+    @swagger_auto_schema(
+        operation_description="Enroll multiple students to a course",
+        request_body=EnrollmentSerializer,  # No need for many=True here
+        responses={200: 'Students successfully enrolled', 400: 'Invalid data', 404: 'Course not found'}
+    )
+    @is_admin
+    def enroll_students(self, request, course_id):
+        data = {
+            'course': course_id,
+            'student_ids': request.data.get('student_ids', [])
+        }
+        serializer = EnrollmentSerializer(data=data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        result = serializer.save()
+        return Response(
+            {'detail': 'Students successfully enrolled', 'enrollments': EnrollmentSerializer(result).data},
+            status=status.HTTP_201_CREATED)
 
 
 class TestViewSet(viewsets.ViewSet):
@@ -285,8 +307,8 @@ class TestCompletionViewSet(viewsets.ViewSet):
     )
     @is_student
     def get_overall_score(self, request, test_id):
-        completed_test = get_object_or_404(CompletedTest, test_id=test_id, student=request.user)
-        result = calculate_test_result(completed_test)
+        result = get_object_or_404(CompletedTest, test_id=test_id, student=request.user)
+        result = calculate_test_result(request, result)
 
         return Response({
             "message": "Score retrieved",
@@ -322,7 +344,7 @@ class TestStatisticsViewSet(viewsets.ViewSet):
         results = CompletedTest.objects.filter(test=test)
         all_scores = []
         for result in results:
-            overall_score = test_stats(result)
+            overall_score = calculate_test_result(request, result)
             all_scores.append(overall_score)
             result.score = overall_score
             result.save()

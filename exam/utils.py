@@ -1,11 +1,6 @@
 from django.db.models import Sum
 from django.utils import timezone
-
 from django.shortcuts import get_object_or_404
-from rest_framework import status
-from rest_framework.exceptions import ValidationError, PermissionDenied
-from rest_framework.response import Response
-
 from exceptions.error_codes import ErrorCodes
 from exceptions.exception import CustomApiException
 from .models import Course, Question, Test, CompletedTest, Choice, AnswerSubmission
@@ -109,7 +104,7 @@ def start_test(user, test, start_time, end_time):
     return completed_test
 
 
-def calculate_test_result(test_completion):
+def calculate_test_result(request, test_completion):
     answers = AnswerSubmission.objects.filter(
         question__test=test_completion.test,
         student=test_completion.student
@@ -119,7 +114,8 @@ def calculate_test_result(test_completion):
     teacher_scores = answers.aggregate(Sum('grade_by_teacher'))['grade_by_teacher__sum'] or 0
     mcq_score = (correct_answers / total_count) * 100 if total_count > 0 else 0
     overall_score = mcq_score + teacher_scores
-
+    if request.user.user_type == 2:
+        return overall_score
     return {
         'total_questions': total_count,
         'mcq_score': mcq_score,
@@ -157,16 +153,3 @@ def process_open_answer(question, answer_data, test_completion):
         question=question,
         answer_text=answer_text
     )
-
-
-def test_stats(test_completion):
-    answers = AnswerSubmission.objects.filter(
-        question__test=test_completion.test,
-        student=test_completion.student
-    )
-    total_count = answers.count()
-    correct_answers = answers.filter(selected_choice__is_correct=True).count()
-    teacher_scores = answers.aggregate(Sum('grade_by_teacher'))['grade_by_teacher__sum'] or 0
-    mcq_score = (correct_answers / total_count) * 100 if total_count > 0 else 0
-    overall_score = mcq_score + teacher_scores
-    return overall_score

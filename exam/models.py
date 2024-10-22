@@ -9,7 +9,7 @@ class User(AbstractUser):
         (3, 'Admin'),
     )
     user_type = models.IntegerField(choices=USER_TYPE_CHOICES, default=1)
-    enrolled_courses = models.ManyToManyField('Course', related_name='enrolled_courses', blank=True)
+    enrolled_courses = models.ManyToManyField('Course', related_name='students', blank=True)
 
     def __str__(self):
         return f'{self.username} - {self.user_type}'
@@ -17,7 +17,7 @@ class User(AbstractUser):
 
 class Course(models.Model):
     name = models.CharField(max_length=128)
-    teacher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='teacher', null=True)
+    teacher = models.ForeignKey(User, on_delete=models.CASCADE, related_name='courses', null=True)
 
     def __str__(self):
         return self.name

@@ -36,6 +36,31 @@ class CourseSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'teacher']
 
 
+class EnrollmentSerializer(serializers.Serializer):
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all())
+    student_ids = serializers.ListField(
+        child=serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(user_type=1))
+    )
+
+    def validate(self, data):
+        course = data['course']
+        student_ids = data['student_ids']
+        already_enrolled_students = course.students.filter(id__in=[student.id for student in student_ids])
+        if already_enrolled_students.exists():
+            already_enrolled = ', '.join([str(student) for student in already_enrolled_students])
+            raise serializers.ValidationError(f"The following students are already enrolled: {already_enrolled}")
+        return data
+
+    def create(self, validated_data):
+        course = validated_data['course']
+        student_ids = validated_data['student_ids']
+        course.enrolled_courses.add(*student_ids)
+        return {
+            'course': course,
+            'students': student_ids,
+        }
+
+
 class ChoiceListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Choice
@@ -108,6 +133,7 @@ class TestSerializer(serializers.ModelSerializer):
             representation['completed'] = None
 
         return representation
+
 
 class TestCreateSerializer(serializers.ModelSerializer):
     questions = QuestionSerializer(many=True, required=False)

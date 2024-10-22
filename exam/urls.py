@@ -10,7 +10,7 @@ urlpatterns = [
 
     # Course URLs
     path('courses/', CourseViewSet.as_view({'get': 'list', 'post': 'create'})),
-    path('courses/<int:course_id>/', CourseViewSet.as_view({'get': 'retrieve'})),
+    path('courses/<int:course_id>/', CourseViewSet.as_view({'get': 'retrieve', 'post': 'enroll_students'})),
 
     # Test Urls
     path('tests/', TestViewSet.as_view({'post': 'create', 'get': 'list'})),
