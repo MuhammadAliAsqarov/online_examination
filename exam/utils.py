@@ -4,6 +4,8 @@ from django.shortcuts import get_object_or_404
 from exceptions.error_codes import ErrorCodes
 from exceptions.exception import CustomApiException
 from .models import Course, Question, Test, CompletedTest, Choice, AnswerSubmission
+from .utils_cache import get_overall_score_cache_key
+from django.core.cache import cache
 
 
 def check_for_course(func):
@@ -104,7 +106,11 @@ def start_test(user, test, start_time, end_time):
     return completed_test
 
 
-def calculate_test_result(request, test_completion):
+def calculate_test_result(test_completion):
+    cache_key = get_overall_score_cache_key(test_completion.test.id, test_completion.student.id)
+    cached_result = cache.get(cache_key)
+    if cached_result:
+        return cached_result
     answers = AnswerSubmission.objects.filter(
         question__test=test_completion.test,
         student=test_completion.student
@@ -114,14 +120,15 @@ def calculate_test_result(request, test_completion):
     teacher_scores = answers.aggregate(Sum('grade_by_teacher'))['grade_by_teacher__sum'] or 0
     mcq_score = (correct_answers / total_count) * 100 if total_count > 0 else 0
     overall_score = mcq_score + teacher_scores
-    if request.user.user_type == 2:
-        return overall_score
-    return {
+
+    result_data = {
         'total_questions': total_count,
         'mcq_score': mcq_score,
         'teacher_scores': teacher_scores,
         'overall_score': overall_score,
     }
+    cache.set(cache_key, result_data, timeout=60 * 15)
+    return result_data
 
 
 def process_answer(question, answer_data, test_completion):

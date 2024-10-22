@@ -17,6 +17,8 @@ from .serializers import CourseCreateSerializer, UserRegisterSerializer, UserLog
     AnswerSubmissionSerializer, EnrollmentSerializer
 from .utils import check_for_course, check_course_retrieve, check_for_test, check_deadline, start_test, \
     calculate_test_result, check_permission, check_test, answers_func
+from .utils_cache import get_cache_key_stats, get_overall_score_cache_key
+from django.core.cache import cache
 
 
 class UserViewSet(viewsets.ViewSet):
@@ -299,6 +301,8 @@ class TestCompletionViewSet(viewsets.ViewSet):
                                      message={'detail': 'Only open questions can be scored'})
         answer_submission.grade_by_teacher = score
         answer_submission.save()
+        cache.delete(get_cache_key_stats('test', test_id))
+        cache.delete(get_overall_score_cache_key(test_id, student_id))
         return Response({"message": "Score recorded"}, status=status.HTTP_200_OK)
 
     @swagger_auto_schema(
@@ -306,16 +310,17 @@ class TestCompletionViewSet(viewsets.ViewSet):
         responses={200: "Score retrieved", 404: "Test not found"}
     )
     @is_student
+    @swagger_auto_schema(
+        operation_description="Get the overall score for a student's test",
+        responses={200: "Score retrieved", 404: "Test not found"}
+    )
+    @is_student
     def get_overall_score(self, request, test_id):
         result = get_object_or_404(CompletedTest, test_id=test_id, student=request.user)
-        result = calculate_test_result(request, result)
-
+        result_data = calculate_test_result(result)
         return Response({
             "message": "Score retrieved",
-            "total_questions": result['total_questions'],
-            "mcq_score": result['mcq_score'],
-            "teacher_scores": result['teacher_scores'],
-            "overall_score": result['overall_score'],
+            **result_data
         }, status=status.HTTP_200_OK)
 
 
@@ -341,10 +346,15 @@ class TestStatisticsViewSet(viewsets.ViewSet):
                 error_code=ErrorCodes.FORBIDDEN.value,
                 message={'detail': 'You are not authorized to view this test'}
             )
+        cache_key = get_cache_key_stats('test', test_id)
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data, status=status.HTTP_200_OK)
         results = CompletedTest.objects.filter(test=test)
         all_scores = []
         for result in results:
-            overall_score = calculate_test_result(request, result)
+            test_result = calculate_test_result(result)
+            overall_score = test_result['overall_score']
             all_scores.append(overall_score)
             result.score = overall_score
             result.save()
@@ -354,4 +364,5 @@ class TestStatisticsViewSet(viewsets.ViewSet):
             'lowest_score': min(all_scores) if all_scores else 0,
             'total_students': len(all_scores),
         }
+        cache.set(cache_key, stats, timeout=60 * 15)
         return Response(stats, status=status.HTTP_200_OK)
