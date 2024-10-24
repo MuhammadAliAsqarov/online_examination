@@ -46,10 +46,10 @@ class EnrollmentSerializer(serializers.Serializer):
         course = data['course']
         student_ids = data['student_ids']
         already_enrolled_students = course.students.filter(id__in=[student.id for student in student_ids])
-        if already_enrolled_students.exists():
-            already_enrolled = ', '.join([str(student) for student in already_enrolled_students])
-            raise serializers.ValidationError(f"The following students are already enrolled: {already_enrolled}")
-        return data
+        if not already_enrolled_students.exists():
+            return data
+        already_enrolled = ', '.join([str(student) for student in already_enrolled_students])
+        raise serializers.ValidationError(f"The following students are already enrolled: {already_enrolled}")
 
     def create(self, validated_data):
         course = validated_data['course']
@@ -112,7 +112,7 @@ class QuestionSerializer(serializers.ModelSerializer):
 
 
 class TestSerializer(serializers.ModelSerializer):
-    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all())
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all()) # Try to find solution for this
     creator = serializers.StringRelatedField(read_only=True)
 
     class Meta:
@@ -137,7 +137,7 @@ class TestSerializer(serializers.ModelSerializer):
 
 class TestCreateSerializer(serializers.ModelSerializer):
     questions = QuestionSerializer(many=True, required=False)
-    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all())
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all()) #Fix filtering
     creator = serializers.StringRelatedField(read_only=True)
 
     class Meta:
