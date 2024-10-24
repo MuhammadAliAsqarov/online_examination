@@ -72,7 +72,6 @@ class CourseViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(
         operation_description="Create a new course with a specified teacher",
-        manual_parameters=[],
         request_body=CourseCreateSerializer,
         responses={201: CourseCreateSerializer()}
     )
