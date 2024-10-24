@@ -109,7 +109,7 @@ class CourseViewSet(viewsets.ViewSet):
 
     @swagger_auto_schema(
         operation_description="Enroll multiple students to a course",
-        request_body=EnrollmentSerializer,  # No need for many=True here
+        request_body=EnrollmentSerializer,
         responses={200: 'Students successfully enrolled', 400: 'Invalid data', 404: 'Course not found'}
     )
     @is_admin
