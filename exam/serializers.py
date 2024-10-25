@@ -112,7 +112,7 @@ class QuestionSerializer(serializers.ModelSerializer):
 
 
 class TestSerializer(serializers.ModelSerializer):
-    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all()) # Try to find solution for this
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all())  # Try to find solution for this
     creator = serializers.StringRelatedField(read_only=True)
 
     class Meta:
@@ -137,7 +137,7 @@ class TestSerializer(serializers.ModelSerializer):
 
 class TestCreateSerializer(serializers.ModelSerializer):
     questions = QuestionSerializer(many=True, required=False)
-    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all()) #Fix filtering
+    course = serializers.PrimaryKeyRelatedField(queryset=Course.objects.all())  # Fix filtering
     creator = serializers.StringRelatedField(read_only=True)
 
     class Meta:
