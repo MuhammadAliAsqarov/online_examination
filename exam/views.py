@@ -179,7 +179,6 @@ class TestViewSet(viewsets.ViewSet):
         #     args=(test_completion.id,),
         #     delay=test.time_limit.total_seconds() * 1000
         # )
-
         return Response({
             'detail': 'Test accessed and started',
             'end_time': test_completion.end_time
