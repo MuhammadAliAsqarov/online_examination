@@ -334,7 +334,7 @@ class TestStatisticsViewSet(viewsets.ViewSet):
                 'lowest_score': openapi.Schema(type=openapi.TYPE_NUMBER),
                 'total_students': openapi.Schema(type=openapi.TYPE_INTEGER),
             }
-        )},
+        )}
     )
     @is_teacher
     def retrieve(self, request, test_id):
